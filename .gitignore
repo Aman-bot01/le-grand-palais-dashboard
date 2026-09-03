@@ -1,0 +1,23 @@
+# Generated data (rebuilt automatically on first run — see engine.py)
+synthetic.duckdb
+synthetic.duckdb.wal
+*.duckdb
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# App-local caches
+cache/
+data/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local convenience launcher (hardcoded local paths, not useful to other users)
+open_clone_dashboard.bat
