@@ -1,14 +1,13 @@
-# Le Grand Palais — Casino Intelligence (Safe Synthetic Clone)
+# Le Grand Palais — Casino Intelligence
 
-A fully working copy of a game-launch intelligence dashboard that runs on
-**100% made-up data**. It never connects to any company database and contains
-no real games, locations, revenue figures, players, or credentials. Safe to
-run, share, screenshot, demo, or deploy publicly.
-
-The dashboard is themed as **Le Grand Palais**, a fictional physical casino
+An analytics dashboard for **Le Grand Palais**, a fictional physical casino
 chain: one property per city, spread across every Canadian province (Québec
 the flagship market, Ontario second) plus a small Las Vegas outpost — 57
 properties in total.
+
+Every game, property, player account, and revenue figure in this app is
+**synthetically generated** — there is no real company data anywhere in it.
+Safe to run, share, screenshot, demo, or deploy publicly.
 
 ## Run it locally
 
@@ -29,13 +28,13 @@ a rebuild reproduces the same dataset every time.
 | `launch_dashboard_v2.py` | The dashboard UI — 10 tabs |
 | `launch.py` | Analytics engine — DTW peer matching, Quick Score, forecasting |
 | `engine.py` | Connects to local DuckDB (auto-builds it on first run) and registers SQL-Server-compatibility macros (`GETDATE`, `ISNULL`, `DATEDIFF`, `DATEADD`) so the T-SQL-style query strings elsewhere run mostly unmodified |
-| `synthetic_data.py` | Generates the entire fake dataset — games, properties, players, revenue |
+| `synthetic_data.py` | Generates the entire dataset — games, properties, players, revenue |
 | `synthetic.duckdb` | The generated database (not committed — built on first run; ~30 MB, ~2.5M rows) |
 
-## The synthetic dataset
+## The dataset
 
-~180 invented games across four internal "systems" (routing detail only —
-the sidebar just shows one combined game list, no platform picker) and 57
+~180 games across four internal "systems" (routing detail only — the
+sidebar just shows one combined game list, no platform picker) and 57
 Le Grand Palais properties, one per city: 15 in Québec, 15 in Ontario, a
 further 25 spread across every other Canadian province, and a 4-branch Las
 Vegas cluster as the one US outpost. Revenue intensity is tuned per-city so
