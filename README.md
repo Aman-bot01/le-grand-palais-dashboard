@@ -1,4 +1,4 @@
-# Le Grand Palais — Casino
+# Le Grand Palais — Casino Intelligence
 
 An analytics dashboard for **Le Grand Palais**, a fictional physical casino
 chain: one property per city, spread across every Canadian province (Québec

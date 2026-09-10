@@ -173,6 +173,15 @@ def _pct(v, d=1):
         return "–"
     return f"{min(v, 99.9):.{d}f}%"
 
+def _pct_uncapped(v, d=1):
+    """Format bet_decay/player_decay -- an index against the game's own week-0
+    baseline, not a share of anything, so unlike _pct() there is no ceiling to
+    clip at. A value over 100% here means the game is doing MORE business than
+    its launch week, which is real and good, not a display error."""
+    if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+        return "–"
+    return f"{v:.{d}f}%"
+
 def badge(text, kind="n"):
     return f'<span class="badge b-{kind}">{text}</span>'
 
@@ -2589,7 +2598,7 @@ def build_launch_report_bytes():
     # here rather than calling into that tab's inline code (keeps this report from ever
     # being able to break the already-verified live page).
     exec_kpis_r = [("bet_handle", "Bet Handle", True), ("hold_pct", "Hold %", True),
-                    ("bet_decay", "Bet Decay", False), ("net_rev", "Net Revenue", True)]
+                    ("bet_decay", "Bet Decay", True), ("net_rev", "Net Revenue", True)]
     n_r_r = n_a_r = 0
     flag_detail_r = []
     for kpi_e, lbl_e, hi_e in exec_kpis_r:
@@ -3344,7 +3353,7 @@ with tab_track:
         weeks_live = max_wk_t + 1
 
         # ══════════════════════ compute everything first, render as one compact block ═══
-        exec_kpis = [("bet_handle", True), ("hold_pct", True), ("bet_decay", False), ("net_rev", True)]
+        exec_kpis = [("bet_handle", True), ("hold_pct", True), ("bet_decay", True), ("net_rev", True)]
         exec_flags = {}
         for kpi_e, hi_e in exec_kpis:
             bnd_e = bkpi(peer_df, kpi_e)
@@ -4178,12 +4187,13 @@ with tab_similar:
                         + "".join(_exp_html) + '</div>', unsafe_allow_html=True)
 
         # ── Cannibalization Check — scoped to the locations where THIS game is actually live ──
-        with st.expander("Is there any cannibalization? — did other games' revenue drop at the SAME locations after this game launched there?"):
+        # Aurora is casino-based (no location dimension), so this section is skipped
+        # entirely for it rather than shown with a "not applicable" placeholder.
+        if platform != "Aurora":
+          with st.expander("Is there any cannibalization? — did other games' revenue drop at the SAME locations after this game launched there?"):
             tgt_dt = pd.to_datetime(meta["launch_date"], errors="coerce")
             if pd.isna(tgt_dt):
                 st.info("Launch date unavailable — cannot compute cannibalization window.")
-            elif platform == "Aurora":
-                st.info("Aurora is casino-based (no location dimension) — cannibalization can't be scoped by location here.")
             else:
                 cw = 4
                 before_start, before_end = tgt_dt - pd.Timedelta(weeks=cw), tgt_dt - pd.Timedelta(days=1)
@@ -4331,7 +4341,7 @@ with tab_full:
         # ARPU and SPP are per-player-PER-WEEK rates (net_rev/players and spins/players on a
         # weekly row) — spell the /wk out, since "Spins/Player" alone reads as per-day next to
         # the genuinely per-day "Spins/Store/Day" on Is It On Track.
-        KPI_CARDS = [("hold_pct", "Hold %", _pct, True), ("bet_decay", "Bet Decay (↓ better)", _pct, False),
+        KPI_CARDS = [("hold_pct", "Hold %", _pct, True), ("bet_decay", "Bet Decay (↑ better)", _pct_uncapped, True),
                      ("arpu", "ARPU net (per player/wk)", _usd, True),
                      ("spp", "Spins (per player/wk)", lambda v: f"{v:,.0f}", True)]
         card_items = [{
@@ -4363,7 +4373,7 @@ with tab_full:
         KPI_PILLS = [("arpu", "ARPU net (per player/wk)", "ARPU ($ per player/wk)", _usd),
                      ("spp", "Spins (per player/wk)", "Spins per player/wk", lambda v: f"{v:,.0f}"),
                      ("stores", "Active casinos", "Casinos", lambda v: f"{v:,.0f}"),
-                     ("player_decay", "Player decay %", "Pl. decay %", _pct)]
+                     ("player_decay", "Player decay %", "Pl. decay %", _pct_uncapped)]
         pill_labels = [p[1] for p in KPI_PILLS]
         sel_pill = st.radio("KPI", pill_labels, horizontal=True, key="pill_v2", label_visibility="collapsed")
         sel_kpi_col, _, sel_ylab, sel_fmt = KPI_PILLS[pill_labels.index(sel_pill)]

@@ -639,7 +639,7 @@ _QS_MILESTONE_METRICS = [
     ("bet_handle", "Bet Handle",      True),
     ("net_rev",    "Net Revenue",     True),
     ("hold_pct",   "House Take %",    True),
-    ("bet_decay",  "Player Return %", False),
+    ("bet_decay",  "Player Return %", True),
 ]
 _QS_MILESTONE_WEEKS = [(30, 4), (60, 8), (90, 13)]
 
@@ -825,13 +825,22 @@ def compute_quick_score(gdf: "pd.DataFrame",
 def _add_derived(df: pd.DataFrame) -> pd.DataFrame:
     """Add net_rev, hold_pct, avg_bet, bet_decay, player_decay (KSK only).
 
-    hold_pct/bet_decay/player_decay are all "current value as a % of a reference
-    point" ratios, not deltas -- the one ratio family in this app where a value
-    at or above 100% reads as broken/nonsensical to a viewer rather than as
-    "grew since launch" (unlike an explicit +150% delta badge, which reads fine).
-    Clipped at 99.9 so none of the three can ever display at or over 100%; real
-    growth for a "growing" game still shows up in its absolute Bet Handle/Net
-    Revenue trend, just not as a >100% reading on these specific ratios.
+    hold_pct is a genuine share-of-wager ratio (net revenue as a % of what was
+    bet) -- structurally bounded, so it's clipped at 99.9 to guard against a
+    rare rounding sliver reading as exactly 100%.
+
+    bet_decay/player_decay are different in kind: each is "this week's value as
+    a % of week 0", an index against the game's own launch baseline, not a
+    share of anything. Values well above 100% are the normal, expected shape
+    for any game that's still growing or holding steady past launch -- that's
+    the good-news case, not an error. An earlier version of this function
+    clipped these at 99.9 too, which was wrong: across the live fleet it
+    flattened 98%+ of all rows to one identical ceiling value, since the
+    typical game's later weeks legitimately run 150-400% of its week-0
+    handle. That turned "Bet Decay vs. Peer Range" into a flat, lifeless line
+    for nearly every game. Left uncapped here; only a defensive ceiling far
+    above anything real data produces (guards against a future divide-by a
+    near-zero week-0 value some other way) is applied.
     """
     df = df.copy()
     df["net_rev"] = df["bet_handle"] - df["total_win"]
@@ -846,7 +855,7 @@ def _add_derived(df: pd.DataFrame) -> pd.DataFrame:
     df = df.merge(w0, on="game_id", how="left")
     df["bet_decay"] = np.where(df["_w0_bet"] > 0,
                                 df["bet_handle"] / df["_w0_bet"] * 100, np.nan)
-    df["bet_decay"] = df["bet_decay"].clip(upper=99.9)
+    df["bet_decay"] = df["bet_decay"].clip(upper=1999.9)
     df.drop(columns=["_w0_bet"], inplace=True)
 
     if df["players"].notna().any():
@@ -857,7 +866,7 @@ def _add_derived(df: pd.DataFrame) -> pd.DataFrame:
         df = df.merge(w0p, on="game_id", how="left")
         df["player_decay"] = np.where(df["_w0_pl"] > 0,
                                        df["players"] / df["_w0_pl"] * 100, np.nan)
-        df["player_decay"] = df["player_decay"].clip(upper=99.9)
+        df["player_decay"] = df["player_decay"].clip(upper=1999.9)
         df.drop(columns=["_w0_pl"], inplace=True)
     else:
         df["arpu"] = np.nan
