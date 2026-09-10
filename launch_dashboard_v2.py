@@ -1,11 +1,10 @@
 """
-Game Launch Intelligence — v2 (Nucleus-styled rebuild) -- SAFE CLONE
+Le Grand Palais — Casino Intelligence
 Run:  streamlit run launch_dashboard_v2.py --server.port 8504
 
-SYNTHETIC-DATA CLONE: this copy runs against a locally generated DuckDB
-database of fully made-up games/locations/revenue (see synthetic_data.py) --
-it never connects to any real company database. Safe to run, share, or
-demo without exposing real business data.
+Runs entirely against a locally generated DuckDB database of fully made-up
+games, properties, and revenue (see synthetic_data.py) -- it never connects
+to any real company database. Safe to run, share, or demo publicly.
 """
 from __future__ import annotations
 import datetime as dt
@@ -220,19 +219,19 @@ def load_whats_new(days_back: int = 90) -> pd.DataFrame:
         loc.ConfigStudio                              AS Studio,
         loc.ConfigPlatform                            AS ConfigPlatform,
         CASE
-            WHEN loc.ConfigPlatform = 'PFH' AND loc.ConfigProduct = 'PFH + Sweeps' AND loc.Kiosk = 1 THEN 'Kiosk Only'
-            WHEN loc.ConfigPlatform = 'PFH' AND loc.ConfigProduct = 'Kiosk Only'   AND loc.Kiosk = 1 THEN 'Kiosk Only'
-            WHEN loc.ConfigPlatform = 'PFH' AND loc.ConfigProduct = 'PFH + Sweeps' AND loc.Kiosk = 0 THEN 'PFH + Sweeps'
-            WHEN loc.ConfigPlatform = 'PFH' AND loc.ConfigProduct = 'PFH Only'     AND loc.Kiosk = 0 THEN 'PFH Only'
+            WHEN loc.ConfigPlatform = 'KSK' AND loc.ConfigProduct = 'KSK + Sweeps' AND loc.Kiosk = 1 THEN 'Kiosk Only'
+            WHEN loc.ConfigPlatform = 'KSK' AND loc.ConfigProduct = 'Kiosk Only'   AND loc.Kiosk = 1 THEN 'Kiosk Only'
+            WHEN loc.ConfigPlatform = 'KSK' AND loc.ConfigProduct = 'KSK + Sweeps' AND loc.Kiosk = 0 THEN 'KSK + Sweeps'
+            WHEN loc.ConfigPlatform = 'KSK' AND loc.ConfigProduct = 'KSK Only'     AND loc.Kiosk = 0 THEN 'KSK Only'
             WHEN loc.ConfigPlatform = 'V2'  AND loc.ConfigProduct = 'P2P'          AND loc.Kiosk = 0 THEN 'P2P'
             WHEN loc.ConfigPlatform = 'V2'  AND loc.ConfigProduct = 'PullTabs'     AND loc.Kiosk = 0 THEN 'PullTabs'
             WHEN loc.ConfigPlatform = 'V2'  AND loc.ConfigProduct = 'Class 2'      AND loc.Kiosk = 0 THEN 'Class 2'
             WHEN loc.ConfigPlatform = 'V2'  AND loc.ConfigProduct = 'HHR'          AND loc.Kiosk = 0 THEN 'HHR'
             WHEN loc.ConfigPlatform = 'V2'  AND loc.ConfigProduct = 'Sweeps'       AND loc.Kiosk = 0 THEN 'Sweeps'
             WHEN loc.ConfigPlatform = 'V1'  AND loc.ConfigProduct = 'Sweeps'       AND loc.Kiosk = 0 THEN 'Sweeps'
-            WHEN loc.ConfigPlatform = 'V1'  AND loc.ConfigProduct = 'PFH Only'     AND loc.Kiosk = 0 THEN 'Sweeps'
+            WHEN loc.ConfigPlatform = 'V1'  AND loc.ConfigProduct = 'KSK Only'     AND loc.Kiosk = 0 THEN 'Sweeps'
             WHEN loc.ConfigPlatform = 'V1'  AND loc.ConfigProduct = 'P2P'          AND loc.Kiosk = 0 THEN 'P2P'
-            WHEN loc.ConfigPlatform = 'V1'  AND loc.ConfigProduct = 'Got Skill'    AND loc.Kiosk = 0 THEN 'P2P'
+            WHEN loc.ConfigPlatform = 'V1'  AND loc.ConfigProduct = 'Skill Play'    AND loc.Kiosk = 0 THEN 'P2P'
             WHEN loc.ConfigPlatform = 'UNKNOWN' AND loc.ConfigProduct = 'Sweeps'   AND loc.Kiosk = 0 THEN 'Sweeps'
             ELSE NULL
         END                                           AS RequiredProduct,
@@ -243,8 +242,8 @@ def load_whats_new(days_back: int = 90) -> pd.DataFrame:
         u.Note,
         MAX(u.Date)                                   AS LastDate,
         COUNT(DISTINCT u.LocationId)                  AS Locations
-    FROM CrmUpdateLogView u
-    LEFT JOIN CrmLocationView loc ON u.LocationId = loc.LocationId
+    FROM OperationsLogView u
+    LEFT JOIN PropertyDirectoryView loc ON u.LocationId = loc.LocationId
     WHERE u.Date >= DATEADD('day', -{days_back}, GETDATE())
     GROUP BY
         loc.ConfigStudio, loc.ConfigPlatform, loc.ConfigProduct, loc.Kiosk,
@@ -260,13 +259,13 @@ def load_whats_new(days_back: int = 90) -> pd.DataFrame:
 
 @st.cache_data(ttl=3600, show_spinner="Loading land-based game releases…")
 def load_game_releases() -> pd.DataFrame:
-    # SIMPLIFIED FOR THE DUCKDB CLONE: the original T-SQL query here used
-    # CROSS APPLY STRING_SPLIT(...) + OUTER APPLY ... TOP 1 ... ORDER BY <priority
-    # CASE> to (a) split multi-game '|'-delimited CrmUpdateLogView.Note values into
-    # one release row per game, and (b) pick the single best GameCatalogView1 match
+    # SIMPLIFIED FOR DUCKDB: a full T-SQL implementation would use CROSS APPLY
+    # STRING_SPLIT(...) + OUTER APPLY ... TOP 1 ... ORDER BY <priority CASE> to
+    # (a) split multi-game '|'-delimited OperationsLogView.Note values into one
+    # release row per game, and (b) pick the single best GameCatalogView match
     # by name when several catalog rows share a name (e.g. a base game + its HR
     # test-rig variant). DuckDB has no APPLY operator and no STRING_SPLIT-as-a-
-    # table-source. The synthetic CrmUpdateLogView this clone ships never writes
+    # table-source. The synthetic OperationsLogView here never writes
     # pipe-delimited multi-game Notes, so (a) is dropped entirely (every Note is
     # already one game); (b) is reproduced with a standard
     # ROW_NUMBER() OVER (PARTITION BY ... ORDER BY <same priority CASE>) + WHERE rn=1,
@@ -277,8 +276,8 @@ def load_game_releases() -> pd.DataFrame:
     WITH fe AS (
         SELECT loc.ConfigStudio AS Studio, loc.ConfigPlatform AS Platform,
                u.Note, u.Platform AS CrmPlatform, MIN(u.Date) AS FirstEnableDate
-        FROM CrmUpdateLogView u
-        LEFT JOIN CrmLocationView loc ON u.LocationId = loc.LocationId
+        FROM OperationsLogView u
+        LEFT JOIN PropertyDirectoryView loc ON u.LocationId = loc.LocationId
         WHERE u.Category = 'Game' AND u.Action = 'Enable'
         GROUP BY loc.ConfigStudio, loc.ConfigPlatform, u.Note, u.Platform
     ),
@@ -286,7 +285,7 @@ def load_game_releases() -> pd.DataFrame:
         SELECT fe.Studio, fe.Platform, fe.Note, fe.CrmPlatform, fe.FirstEnableDate,
                COUNT(DISTINCT u2.LocationId) AS LocationsAtLaunch
         FROM fe
-        JOIN CrmUpdateLogView u2
+        JOIN OperationsLogView u2
             ON  u2.Note = fe.Note AND u2.Action = 'Enable' AND u2.Category = 'Game'
             AND CAST(u2.Date AS DATE) = CAST(fe.FirstEnableDate AS DATE)
         GROUP BY fe.Studio, fe.Platform, fe.Note, fe.CrmPlatform, fe.FirstEnableDate
@@ -295,11 +294,11 @@ def load_game_releases() -> pd.DataFrame:
         SELECT Name, Id AS GameId, Type AS GameType,
             CASE Product
                 WHEN 'p2p' THEN 'PTP' WHEN 'hhr' THEN 'PTP' WHEN 'pulltabs' THEN 'PULL'
-                WHEN 'sweeps' THEN 'SWPS' WHEN 'class2' THEN 'CLS2' WHEN 'gotskill' THEN 'GSKL'
+                WHEN 'sweeps' THEN 'SWPS' WHEN 'class2' THEN 'CLS2' WHEN 'skillplay' THEN 'GSKL'
                 ELSE 'OTHER'
             END AS CrmGroup,
             CASE Product WHEN 'p2p' THEN 1 ELSE 2 END AS Prio
-        FROM GameCatalogView1
+        FROM GameCatalogView
     ),
     matched AS (
         SELECT ll.Studio, ll.Platform, ll.Note, ll.CrmPlatform, ll.FirstEnableDate,
@@ -310,9 +309,9 @@ def load_game_releases() -> pd.DataFrame:
                     CASE
                         WHEN ll.CrmPlatform = 'V2 Pay to Play' AND c.CrmGroup = 'PTP'  THEN 1
                         WHEN ll.CrmPlatform = 'V2 Pull-Tabs'   AND c.CrmGroup = 'PULL' THEN 1
-                        WHEN ll.CrmPlatform IN ('V1 Sweeps', 'V2 Sweeps', 'PFH Sweeps') AND c.CrmGroup = 'SWPS' THEN 1
+                        WHEN ll.CrmPlatform IN ('V1 Sweeps', 'V2 Sweeps', 'KSK Sweeps') AND c.CrmGroup = 'SWPS' THEN 1
                         WHEN ll.CrmPlatform = 'V2 Class 2'     AND c.CrmGroup = 'CLS2' THEN 1
-                        WHEN ll.CrmPlatform = 'V1 Got Skill'   AND c.CrmGroup = 'GSKL' THEN 1
+                        WHEN ll.CrmPlatform = 'V1 Skill Play'   AND c.CrmGroup = 'GSKL' THEN 1
                         ELSE 2
                     END, c.Prio, c.GameId
             ) AS rn
@@ -327,7 +326,7 @@ def load_game_releases() -> pd.DataFrame:
     LEFT JOIN (
         SELECT dp.GameId, STRING_AGG(dp.ProductName, ', ') AS Products
         FROM (
-            SELECT DISTINCT GameId, ProductName FROM TaskHandlerBetSpinSummary
+            SELECT DISTINCT GameId, ProductName FROM ProductPerformanceSummary
             WHERE CasinoName IN ('vendor1', 'vendor2') AND ProductName IS NOT NULL
         ) dp
         GROUP BY dp.GameId
@@ -345,19 +344,19 @@ def load_game_releases() -> pd.DataFrame:
     df["Category"] = "Game"
     return df
 
-@st.cache_data(ttl=3600, show_spinner="Loading EdgeLabs releases…")
-def load_edgelabs_releases(days_back: int = 90) -> pd.DataFrame:
+@st.cache_data(ttl=3600, show_spinner="Loading Aurora releases…")
+def load_aurora_releases(days_back: int = 90) -> pd.DataFrame:
     try:
         conn = E.get_connection()
         sql = f"""
         SELECT g.Id, g.Name, g.Type, fs.PlatformName, fs.FirstSpinDate
         FROM (
           SELECT TRY_CAST(GameId AS INT) AS GameIdInt, PlatformName, MIN(Date) AS FirstSpinDate
-          FROM BetSpinSummaryCashView3
+          FROM WagerSummaryView
           WHERE FreeGameCampaignId IS NULL
           GROUP BY TRY_CAST(GameId AS INT), PlatformName
         ) fs
-        JOIN GameCatalogView1 g ON fs.GameIdInt = g.Id
+        JOIN GameCatalogView g ON fs.GameIdInt = g.Id
         WHERE fs.FirstSpinDate >= DATEADD('day', -{days_back}, GETDATE())
           AND fs.FirstSpinDate <= GETDATE()
         ORDER BY fs.FirstSpinDate
@@ -381,7 +380,7 @@ def load_edgelabs_releases(days_back: int = 90) -> pd.DataFrame:
 
 # ─── Peer matching + Quick Score helpers, copied verbatim from launch_dashboard.py ──
 def load_sql_catalog() -> pd.DataFrame:
-    """Load GameCatalogView1 via SQL; returns empty DataFrame on failure."""
+    """Load GameCatalogView via SQL; returns empty DataFrame on failure."""
     try:
         conn = E.get_connection()
         cat_sql = E.load_game_catalog_with_fallback(conn)
@@ -441,13 +440,13 @@ def find_peers_scaled(df, target_id, kpi="bet_decay", n_weeks=None, top_k=5,
     return res
 
 @st.cache_data(ttl=3600, show_spinner="Loading player counts…")
-def load_edgelabs_player_weeks(game_id: int, launch_date: str, platform: str = "EdgeLabs") -> pd.DataFrame:
+def load_aurora_player_weeks(game_id: int, launch_date: str, platform: str = "Aurora") -> pd.DataFrame:
     try:
         conn = E.get_connection()
         sql = f"""
         SELECT DATEDIFF('week', '{launch_date}', CAST("Date" AS DATE)) AS launch_week,
             COUNT(DISTINCT AccountNumber) AS unique_players
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE PlatformName = '{platform}' AND TRY_CAST(GameId AS INT) = {int(game_id)}
           AND FreeGameCampaignId IS NULL AND AccountNumber IS NOT NULL
         GROUP BY DATEDIFF('week', '{launch_date}', CAST("Date" AS DATE))
@@ -497,11 +496,11 @@ def _flag_cls(actual, p25, p75, p10=None, p90=None, higher_is_better=True):
 
 def _classify_game_platform(pp: str):
     p = str(pp).strip(); pl = p.lower()
-    if "edgelabs" in pl: return ("EdgeLabs", "EdgeLabs")
-    if p == "Pong" or pl == "pong": return ("PFH", "PFH · Pong")
-    if "pfh" in pl: return ("PFH", "PFH · Sweeps")
+    if "aurora" in pl: return ("Aurora", "Aurora")
+    if p == "Solstice" or pl == "solstice": return ("KSK", "KSK · Solstice")
+    if "ksk" in pl: return ("KSK", "KSK · Sweeps")
     if pl.startswith("v1"):
-        if "got skill" in pl or "gotskill" in pl: return ("V1", "Got Skill")
+        if "skill play" in pl or "skillplay" in pl: return ("V1", "Skill Play")
         return ("V1", "Sweeps")
     if pl.startswith("v2"):
         if "pull" in pl: return ("V2", "Pull-Tabs")
@@ -602,33 +601,33 @@ def load_data(platform):
     return df
 
 
-# Gaming-floor display names — the underlying value ("PFH"/"V2"/"V1"/"EdgeLabs")
+# Gaming-floor display names — the underlying value ("KSK"/"V2"/"V1"/"Aurora")
 # still drives every SQL query in engine.py/launch.py unchanged; this is purely
 # a friendlier label so the sidebar reads like a casino floor plan, not a
 # system name, without touching the ~30 queries keyed on the real values.
 FLOOR_LABELS = {
     "V2": "Main Gaming Floor",
     "V1": "Heritage Floor",
-    "PFH": "VIP Kiosk Network",
-    "EdgeLabs": "Private Members' Club",
+    "KSK": "VIP Kiosk Network",
+    "Aurora": "Private Members' Club",
 }
 
-# Regulatory/technical product codes (p2p, hhr, gotskill, ...) -- display-only
+# Regulatory/technical product codes (p2p, hhr, skillplay, ...) -- display-only
 # translation to plain game-category names. The underlying values are untouched
 # (they're matched literally in ~15 SQL CASE WHEN clauses), this just relabels
 # them wherever they're shown to a user. Covers both casings that show up in the
-# data (GameCatalogView1.Product is lowercase, CrmLocationView.ConfigProduct and
+# data (GameCatalogView.Product is lowercase, PropertyDirectoryView.ConfigProduct and
 # the What's New CASE WHEN output are Title Case).
 GENERIC_PRODUCT_LABELS = {
     "p2p": "Classic", "P2P": "Classic",
-    "sweeps": "Sweepstakes", "Sweeps": "Sweepstakes", "PFH + Sweeps": "Sweepstakes",
+    "sweeps": "Sweepstakes", "Sweeps": "Sweepstakes", "KSK + Sweeps": "Sweepstakes",
     "pulltabs": "Instant Win", "PullTabs": "Instant Win",
     "class2": "Bingo-Style", "Class 2": "Bingo-Style",
     "hhr": "Racing Game", "HHR": "Racing Game",
-    "gotskill": "Skill Game", "Got Skill": "Skill Game",
-    "pfh-edgelabs": "Digital Play",
-    "Kiosk Only": "Kiosk", "PFH Only": "Standard",
-    "PFH · Pong": "Kiosk", "PFH · Sweeps": "Sweepstakes",
+    "skillplay": "Skill Game", "Skill Play": "Skill Game",
+    "ksk-aurora": "Digital Play",
+    "Kiosk Only": "Kiosk", "KSK Only": "Standard",
+    "KSK · Solstice": "Kiosk", "KSK · Sweeps": "Sweepstakes",
     "Pull-Tabs": "Instant Win", "Pay to Play": "Classic",
 }
 
@@ -639,7 +638,7 @@ def _generic_product(series):
     return series.map(lambda v: GENERIC_PRODUCT_LABELS.get(v, v))
 
 
-_AGS_PLATFORMS = ("PFH", "V1", "V2", "EdgeLabs")
+_AGS_PLATFORMS = ("KSK", "V1", "V2", "Aurora")
 
 @st.cache_data(ttl=86400, show_spinner="Loading all platforms…")
 def _combined_platform_df():
@@ -767,7 +766,7 @@ _CLUSTER_META = {
 # TAB — BUSINESS OVERVIEW
 # ══════════════════════════════════════════════════════════════════
 _HS_PERIODS = ["Lifetime", "Last Week", "MTD", "Last Month", "QTD", "YTD"]
-_LIFETIME_START = dt.date(2000, 1, 1)  # PFH/V1/V2 data doesn't predate this by years, so it's a safe "all of it" floor
+_LIFETIME_START = dt.date(2000, 1, 1)  # KSK/V1/V2 data doesn't predate this by years, so it's a safe "all of it" floor
 
 def _hs_get_dates(period_label):
     today = dt.date.today()
@@ -809,14 +808,14 @@ def _hs_get_dates(period_label):
     return cur, pri
 
 @st.cache_data(ttl=1800, show_spinner="Loading period data…")
-def _load_period_pfh(start, end):
+def _load_period_ksk(start, end):
     sql = f"""
     SELECT TRY_CAST(b.GameId AS INT) AS game_id, MAX(gc.Name) AS game_name,
         SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
         SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev,
         COUNT(DISTINCT b.StoreNumber) AS stores, SUM(b.Spins) AS spins
-    FROM BetSpinSummaryCashView3Pong b
-    LEFT JOIN GameCatalogView1 gc ON gc.Id = TRY_CAST(b.GameId AS INT)
+    FROM WagerSummaryViewSolstice b
+    LEFT JOIN GameCatalogView gc ON gc.Id = TRY_CAST(b.GameId AS INT)
     WHERE CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}' AND TRY_CAST(b.GameId AS INT) IS NOT NULL
     GROUP BY TRY_CAST(b.GameId AS INT)
     """
@@ -831,8 +830,8 @@ def _load_period_v2v1(platform_code, start, end):
         SUM(CAST(g.TotalPlay AS FLOAT)/100.0) AS bet,
         SUM(CAST(g.TotalPlay AS FLOAT)/100.0) - SUM(CAST(g.TotalWin AS FLOAT)/100.0) AS net_rev,
         COUNT(DISTINCT g.SummaryLocationId) AS stores, SUM(g.PlayCount) AS spins
-    FROM AnalyticsGameTerminalsGames g
-    JOIN GameCatalogView1 gc ON gc.Id = g.Id
+    FROM TerminalActivityView g
+    JOIN GameCatalogView gc ON gc.Id = g.Id
     WHERE gc.Platform = '{gc_plat}' AND CAST(g.SummaryDate AS DATE) BETWEEN '{start}' AND '{end}'
     GROUP BY gc.Id, gc.Name
     """
@@ -846,9 +845,9 @@ def _load_period_el(start, end):
         SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
         SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev,
         COUNT(DISTINCT b.CasinoName) AS stores, SUM(b.Spins) AS spins
-    FROM BetSpinSummaryCashView3 b
-    LEFT JOIN GameCatalogView1 gc ON gc.Id = TRY_CAST(b.GameId AS INT)
-    WHERE b.PlatformName = 'EdgeLabs' AND CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
+    FROM WagerSummaryView b
+    LEFT JOIN GameCatalogView gc ON gc.Id = TRY_CAST(b.GameId AS INT)
+    WHERE b.PlatformName = 'Aurora' AND CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
         AND TRY_CAST(b.GameId AS INT) IS NOT NULL
     GROUP BY TRY_CAST(b.GameId AS INT)
     """
@@ -866,13 +865,13 @@ def _load_release_window_perf(platform_code: str, game_dates: tuple) -> pd.DataF
     if not game_dates:
         return pd.DataFrame()
     values_sql = ",".join(f"({int(gid)}, CAST('{d}' AS DATE))" for gid, d in game_dates)
-    if platform_code == "PFH":
+    if platform_code == "KSK":
         sql = f"""
         SELECT v.gid AS game_id,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev
         FROM (VALUES {values_sql}) v(gid, release_date)
-        JOIN BetSpinSummaryCashView3Pong b
+        JOIN WagerSummaryViewSolstice b
             ON TRY_CAST(b.GameId AS INT) = v.gid AND CAST(b."Date" AS DATE) >= v.release_date
         GROUP BY v.gid
         """
@@ -883,19 +882,19 @@ def _load_release_window_perf(platform_code: str, game_dates: tuple) -> pd.DataF
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) AS bet,
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) - SUM(CAST(g.TotalWin AS FLOAT)/100.0) AS net_rev
         FROM (VALUES {values_sql}) v(gid, release_date)
-        JOIN GameCatalogView1 gc ON gc.Id = v.gid AND gc.Platform = '{gc_plat}'
-        JOIN AnalyticsGameTerminalsGames g
+        JOIN GameCatalogView gc ON gc.Id = v.gid AND gc.Platform = '{gc_plat}'
+        JOIN TerminalActivityView g
             ON g.Id = v.gid AND CAST(g.SummaryDate AS DATE) >= v.release_date
         GROUP BY v.gid
         """
-    else:  # EdgeLabs
+    else:  # Aurora
         sql = f"""
         SELECT v.gid AS game_id,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev
         FROM (VALUES {values_sql}) v(gid, release_date)
-        JOIN BetSpinSummaryCashView3 b
-            ON TRY_CAST(b.GameId AS INT) = v.gid AND b.PlatformName = 'EdgeLabs'
+        JOIN WagerSummaryView b
+            ON TRY_CAST(b.GameId AS INT) = v.gid AND b.PlatformName = 'Aurora'
                AND CAST(b."Date" AS DATE) >= v.release_date
         GROUP BY v.gid
         """
@@ -926,21 +925,21 @@ def _similarity_pct(distance, n_match_weeks=None, k=65.0):
     per_week = distance / max(float(n_match_weeks), 1.0) if n_match_weeks else distance
     return round(min(100.0 * np.exp(-per_week / k), 99.9), 1)
 
-# ─── Weekly Games page — loaders ───────────────────────────────────────────
-# Metric definitions here deliberately mirror the "Game Performance" Power BI
-# semantic model (workspace "Game Performance Reports"), read directly from its
-# DAX so this page and that report agree:
+# ─── Weekly Games page — loaders ─────────────────────────────────────────────────────────────────────────────
+# Metric definitions here deliberately mirror a standard "game performance"
+# BI semantic model, so the formulas below match common industry reporting
+# conventions:
 #   Bet ($)/Day = SUM(Total Bet $) / DISTINCTCOUNT(Date)
 #   RTP%        = SUM(Total Win $) / SUM(Total Bet $)
 #   Active Games= DISTINCTCOUNT(Game) where Date >= EDATE(TODAY(), -3)
-# Panel splits come from real catalog fields: GameCatalogView1.ScreenOrientation
-# (horizontal/vertical/responsive) for V2, and .Codebase (gen0/gen1/gen2) for PFH.
+# Panel splits come from real catalog fields: GameCatalogView.ScreenOrientation
+# (horizontal/vertical/responsive) for V2, and .Codebase (gen0/gen1/gen2) for KSK.
 @st.cache_data(ttl=1800, show_spinner="Loading weekly game performance…")
 def _load_weekly_games(start, end):
     """One row per (platform, product/codebase, orientation, game) for a date window.
 
-    V2 = land-based terminals (AnalyticsGameTerminalsGames, has Product + orientation).
-    PFH = the Pong/PFH online side of BetSpinSummaryCashView3, split by Codebase gen.
+    V2 = land-based terminals (TerminalActivityView, has Product + orientation).
+    KSK = the Solstice/KSK online side of WagerSummaryView, split by Codebase gen.
     """
     conn = E.get_connection()
     sql_v2 = f"""
@@ -950,21 +949,21 @@ def _load_weekly_games(start, end):
         SUM(CAST(g.TotalWin AS FLOAT)/100.0) AS win,
         COUNT(DISTINCT g.SummaryLocationId) AS stores,
         COUNT(DISTINCT CAST(g.SummaryDate AS DATE)) AS game_days
-    FROM AnalyticsGameTerminalsGames g
-    JOIN GameCatalogView1 gc ON gc.Id = g.Id AND gc.Platform = 'v2'
+    FROM TerminalActivityView g
+    JOIN GameCatalogView gc ON gc.Id = g.Id AND gc.Platform = 'v2'
     WHERE CAST(g.SummaryDate AS DATE) BETWEEN '{start}' AND '{end}'
     GROUP BY gc.Product, gc.ScreenOrientation, gc.Id, gc.Name
     """
-    sql_pfh = f"""
-    SELECT 'PFH' AS platform, gc.Codebase AS segment, gc.ScreenOrientation AS orientation,
+    sql_ksk = f"""
+    SELECT 'KSK' AS platform, gc.Codebase AS segment, gc.ScreenOrientation AS orientation,
         gc.Id AS game_id, gc.Name AS game_name,
         SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
         SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS win,
         COUNT(DISTINCT b.StoreNumber) AS stores,
         COUNT(DISTINCT CAST(b."Date" AS DATE)) AS game_days
-    FROM BetSpinSummaryCashView3 b
-    JOIN GameCatalogView1 gc ON gc.Id = TRY_CAST(b.GameId AS INT)
-    WHERE b.PlatformName = 'Pong' AND b.CasinoName = 'PFH'
+    FROM WagerSummaryView b
+    JOIN GameCatalogView gc ON gc.Id = TRY_CAST(b.GameId AS INT)
+    WHERE b.PlatformName = 'Solstice' AND b.CasinoName = 'KSK'
       AND CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
     GROUP BY gc.Codebase, gc.ScreenOrientation, gc.Id, gc.Name
     """
@@ -973,11 +972,11 @@ def _load_weekly_games(start, end):
     except Exception:
         d_v2 = pd.DataFrame()
     try:
-        d_pfh = E.query_df(conn, sql_pfh)
+        d_ksk = E.query_df(conn, sql_ksk)
     except Exception:
-        d_pfh = pd.DataFrame()
+        d_ksk = pd.DataFrame()
     conn.close()
-    d = pd.concat([x for x in (d_v2, d_pfh) if not x.empty], ignore_index=True) if (not d_v2.empty or not d_pfh.empty) else pd.DataFrame()
+    d = pd.concat([x for x in (d_v2, d_ksk) if not x.empty], ignore_index=True) if (not d_v2.empty or not d_ksk.empty) else pd.DataFrame()
     if d.empty:
         return d
     for c in ("bet", "win", "stores", "game_days"):
@@ -991,12 +990,12 @@ def _load_weekly_games(start, end):
 def _load_new_launches(as_of: str, days_back: int = 30):
     """Games whose first-ever recorded activity falls within days_back of as_of.
 
-    Uses first-appearance in the fact data — the same basis as the Power BI model's
+    Uses first-appearance in the fact data — the same basis as the source reporting model's
     "First Appearance" column — rather than CRM enable dates, so it stays consistent
     with the bet figures on this page. Store count is measured over the same window.
 
-    ttl=21600 (6h), not the usual 1800 (30min): the PFH half of this query does an
-    unfiltered MIN(Date) GROUP BY over BetSpinSummaryCashView3's entire history
+    ttl=21600 (6h), not the usual 1800 (30min): the KSK half of this query does an
+    unfiltered MIN(Date) GROUP BY over WagerSummaryView's entire history
     (~21s alone, profiled 2026-08-21) since there's no way to know a game's true
     first-ever date without scanning all of its rows. A "newly launched in the last
     30 days" list doesn't need fresher than same-business-day data, so this trades
@@ -1009,30 +1008,30 @@ def _load_new_launches(as_of: str, days_back: int = 30):
     FROM (
         SELECT g.Id AS gid, MIN(CAST(g.SummaryDate AS DATE)) AS first_date,
                COUNT(DISTINCT g.SummaryLocationId) AS stores
-        FROM AnalyticsGameTerminalsGames g
+        FROM TerminalActivityView g
         GROUP BY g.Id
     ) fa
-    JOIN GameCatalogView1 gc ON gc.Id = fa.gid AND gc.Platform = 'v2'
+    JOIN GameCatalogView gc ON gc.Id = fa.gid AND gc.Platform = 'v2'
     WHERE fa.first_date >= DATEADD('day', -{int(days_back)}, CAST('{as_of}' AS DATE))
       AND fa.first_date <= CAST('{as_of}' AS DATE)
     """
-    sql_pfh = f"""
-    SELECT 'PFH' AS platform, gc.Name AS game_name, gc.ScreenOrientation AS orientation,
+    sql_ksk = f"""
+    SELECT 'KSK' AS platform, gc.Name AS game_name, gc.ScreenOrientation AS orientation,
         fa.first_date AS launched, fa.stores
     FROM (
         SELECT TRY_CAST(b.GameId AS INT) AS gid, MIN(CAST(b."Date" AS DATE)) AS first_date,
                COUNT(DISTINCT b.StoreNumber) AS stores
-        FROM BetSpinSummaryCashView3 b
-        WHERE b.PlatformName = 'Pong' AND b.CasinoName = 'PFH'
+        FROM WagerSummaryView b
+        WHERE b.PlatformName = 'Solstice' AND b.CasinoName = 'KSK'
           AND TRY_CAST(b.GameId AS INT) IS NOT NULL
         GROUP BY TRY_CAST(b.GameId AS INT)
     ) fa
-    JOIN GameCatalogView1 gc ON gc.Id = fa.gid
+    JOIN GameCatalogView gc ON gc.Id = fa.gid
     WHERE fa.first_date >= DATEADD('day', -{int(days_back)}, CAST('{as_of}' AS DATE))
       AND fa.first_date <= CAST('{as_of}' AS DATE)
     """
     out = []
-    for sql in (sql_v2, sql_pfh):
+    for sql in (sql_v2, sql_ksk):
         try:
             out.append(E.query_df(conn, sql))
         except Exception:
@@ -1050,21 +1049,21 @@ def _load_new_launches(as_of: str, days_back: int = 30):
 @st.cache_data(ttl=1800, show_spinner="Counting active games…")
 def _load_active_games(as_of: str, months_back: int = 3):
     """Distinct games with any activity in the trailing months_back — matches the
-    Power BI model's Active Games measure (Date >= EDATE(TODAY(), -3))."""
+    source model's Active Games measure (Date >= EDATE(TODAY(), -3))."""
     conn = E.get_connection()
     n = 0
     sql_v2 = f"""
-    SELECT COUNT(DISTINCT g.Id) AS n FROM AnalyticsGameTerminalsGames g
+    SELECT COUNT(DISTINCT g.Id) AS n FROM TerminalActivityView g
     WHERE CAST(g.SummaryDate AS DATE) >= DATEADD('month', -{int(months_back)}, CAST('{as_of}' AS DATE))
       AND CAST(g.SummaryDate AS DATE) <= CAST('{as_of}' AS DATE)
     """
-    sql_pfh = f"""
-    SELECT COUNT(DISTINCT TRY_CAST(b.GameId AS INT)) AS n FROM BetSpinSummaryCashView3 b
-    WHERE b.PlatformName = 'Pong' AND b.CasinoName = 'PFH'
+    sql_ksk = f"""
+    SELECT COUNT(DISTINCT TRY_CAST(b.GameId AS INT)) AS n FROM WagerSummaryView b
+    WHERE b.PlatformName = 'Solstice' AND b.CasinoName = 'KSK'
       AND CAST(b."Date" AS DATE) >= DATEADD('month', -{int(months_back)}, CAST('{as_of}' AS DATE))
       AND CAST(b."Date" AS DATE) <= CAST('{as_of}' AS DATE)
     """
-    for sql in (sql_v2, sql_pfh):
+    for sql in (sql_v2, sql_ksk):
         try:
             r = E.query_df(conn, sql)
             if not r.empty and pd.notna(r["n"].iloc[0]):
@@ -1074,46 +1073,41 @@ def _load_active_games(as_of: str, months_back: int = 3):
     conn.close()
     return n
 
-# ─── Social Casino page — loaders ──────────────────────────────────────────
+# ─── Social Casino page — loaders ──────────────────────────────────────────────────────────────────────
 # Player-identity metrics (Stickiness/DAU/MAU/ARPDAU) only mean something where
 # a returning player can actually be identified — the online/player-account side
-# of the business, not anonymous land-based terminals. Two real sources, verified
-# live against the "Social Casino Detailed Report" Power BI model (workspace
-# "Social Casino Reports", table "Calculations", 91 measures):
-#   PFH      -> BetSpinSummaryCashView3 WHERE PlatformName='Pong' — PFH's online
-#               identity (see reference_platform_taxonomy: PFH online = "Pong").
-#               ALL currencies, not just Sweeps: cross-checked against that
-#               report's own visuals, whose "PFH 57K" players and per-game counts
-#               (Diamond 7s 20.27K, Fiery 7s 18K, Ruby X 11.96K) match the
-#               all-currency figures exactly and NOT the SC-only slice (16,465).
-#   EdgeLabs -> BetSpinSummarySocialView2 (its own 20+ casino-brand roster)
+# of the business, not anonymous land-based terminals. Two data sources feed this:
+#   KSK    -> WagerSummaryView WHERE PlatformName='Solstice' — KSK's online
+#             identity. ALL currencies are included, not just Sweeps, so the
+#             player counts reflect the full player base, not one currency slice.
+#   Aurora -> MemberActivityView (its own 20+ casino-brand roster)
 # Formulas mirror that model's DAX exactly:
 #   Stickiness % = DAU / MAU   (MAU = distinct accounts in that calendar month)
 #   ARPDAU = Net Revenue / DAU
 # Every query aggregates in SQL (COUNT DISTINCT / SUM) — never pulls row-level
-# spin data into pandas, since EdgeLabs alone has millions of rows/year here.
+# spin data into pandas, since Aurora alone has millions of rows/year here.
 def _social_src(platform: str):
     """(from_sql, base_where, date_expr, acct_expr, bet_expr, win_expr, game_expr,
     has_casino_dim) for the platform's spin-level source.
 
-    PFH/EdgeLabs read BetSpinSummaryCashView3(Pong)/BetSpinSummarySocialView2 — a
+    KSK/Aurora read WagerSummaryView(Solstice)/MemberActivityView — a
     real player-account column (AccountNumber), with a Casino/Aggregator/Currency
-    dimension. V1/V2 (land-based) read AnalyticsGameTerminalsGames joined to
-    GameCatalogView1 for the platform filter — a different schema (PlayerAccountNumber,
+    dimension. V1/V2 (land-based) read TerminalActivityView joined to
+    GameCatalogView for the platform filter — a different schema (PlayerAccountNumber,
     TotalPlay/TotalWin in cents like the rest, SummaryDate, no casino-brand or
     currency dimension since it's one property's own gaming floor, not an aggregator
     network), but the loyalty-card tap on each row is exactly the same kind of
-    player-identity signal AccountNumber gives PFH/EdgeLabs.
+    player-identity signal AccountNumber gives KSK/Aurora.
     """
-    if platform == "EdgeLabs":
-        return ("BetSpinSummarySocialView2", "1=1", '"Date"', "AccountNumber",
+    if platform == "Aurora":
+        return ("MemberActivityView", "1=1", '"Date"', "AccountNumber",
                 "TotalBet", "TotalWin", "GameId", True)
-    if platform == "PFH":
-        return ("BetSpinSummaryCashView3", "PlatformName = 'Pong'", '"Date"', "AccountNumber",
+    if platform == "KSK":
+        return ("WagerSummaryView", "PlatformName = 'Solstice'", '"Date"', "AccountNumber",
                 "TotalBet", "TotalWin", "GameId", True)
     if platform in ("V1", "V2"):
         gc_plat = L._GC_PLATFORM.get(platform, platform)
-        return (f"AnalyticsGameTerminalsGames g JOIN GameCatalogView1 gc ON gc.Id = g.Id",
+        return (f"TerminalActivityView g JOIN GameCatalogView gc ON gc.Id = g.Id",
                 f"gc.Platform = '{gc_plat}'", "g.SummaryDate", "g.PlayerAccountNumber",
                 "g.TotalPlay", "g.TotalWin", "g.Id", False)
     raise ValueError(f"Unknown platform: {platform}")
@@ -1122,12 +1116,12 @@ def _social_src(platform: str):
 def _social_where(platform, casino, aggregator, game_id, start, end, currency=None):
     table, base, date_expr, _acct, _bet, _win, game_expr, _has_casino = _social_src(platform)
     clauses = [base, f"CAST({date_expr} AS DATE) BETWEEN '{start}' AND '{end}'"]
-    # Currency must be pinned for EdgeLabs: that table mixes GC (Gold Coins,
+    # Currency must be pinned for Aurora: that table mixes GC (Gold Coins,
     # play-money), SC (Sweeps Coins) and WOW in one column, and summing money
     # across them is meaningless — GC alone yields a 23,825% "RTP" because its
     # win/bet relationship isn't real economics. Verified against live SQL.
     # V1/V2 have no currency/casino/aggregator dimension at all, so these three
-    # never apply there — the sidebar UI only ever sets them for EdgeLabs.
+    # never apply there — the sidebar UI only ever sets them for Aurora.
     if currency and currency != "All":
         clauses.append(f"CurrencyName = '{currency.replace(chr(39), chr(39)*2)}'")
     if casino and casino != "All":
@@ -1211,7 +1205,7 @@ def _load_social_by_game(platform, casino, aggregator, start, end, currency=None
     conn = E.get_connection()
     try:
         d = E.query_df(conn, sql)
-        names = E.query_df(conn, "SELECT Id, Name FROM GameCatalogView1")
+        names = E.query_df(conn, "SELECT Id, Name FROM GameCatalogView")
     finally:
         conn.close()
     if d.empty:
@@ -1244,7 +1238,7 @@ def _load_social_by_casino(platform, aggregator, start, end, currency=None, game
 @st.cache_data(ttl=1800, show_spinner=False)
 def _load_social_game_currencies(platform, game_id):
     """Which currencies a specific game actually has rows in — used to pick a sane
-    default Currency (e.g. some EdgeLabs games only ever ran in GC, never SC).
+    default Currency (e.g. some Aurora games only ever ran in GC, never SC).
     V1/V2 have no currency dimension at all, so this is always empty there."""
     table, base, _d, _a, _b, _w, game_expr, has_casino = _social_src(platform)
     if not game_id or not has_casino:
@@ -1328,12 +1322,12 @@ def _load_calendar_daily(platform, start, end):
     daily rows into day/week/month depending on the selected local period.
     """
     conn = E.get_connection()
-    if platform == "PFH":
+    if platform == "KSK":
         sql = f"""
         SELECT CAST(b."Date" AS DATE) AS d,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev
-        FROM BetSpinSummaryCashView3Pong b
+        FROM WagerSummaryViewSolstice b
         WHERE CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
         GROUP BY CAST(b."Date" AS DATE)
         """
@@ -1343,18 +1337,18 @@ def _load_calendar_daily(platform, start, end):
         SELECT CAST(g.SummaryDate AS DATE) AS d,
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) AS bet,
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) - SUM(CAST(g.TotalWin AS FLOAT)/100.0) AS net_rev
-        FROM AnalyticsGameTerminalsGames g
-        JOIN GameCatalogView1 gc ON gc.Id = g.Id
+        FROM TerminalActivityView g
+        JOIN GameCatalogView gc ON gc.Id = g.Id
         WHERE gc.Platform = '{gc_plat}' AND CAST(g.SummaryDate AS DATE) BETWEEN '{start}' AND '{end}'
         GROUP BY CAST(g.SummaryDate AS DATE)
         """
-    elif platform == "EdgeLabs":
+    elif platform == "Aurora":
         sql = f"""
         SELECT CAST(b."Date" AS DATE) AS d,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev
-        FROM BetSpinSummaryCashView3 b
-        WHERE b.PlatformName = 'EdgeLabs' AND CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
+        FROM WagerSummaryView b
+        WHERE b.PlatformName = 'Aurora' AND CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
         GROUP BY CAST(b."Date" AS DATE)
         """
     else:
@@ -1385,14 +1379,14 @@ def _combined_calendar_daily(start, end):
     return allc.groupby("d", as_index=False).agg(bet=("bet", "sum"), net_rev=("net_rev", "sum")).sort_values("d")
 
 def _combined_period_pg(start, end):
-    """Same shape as _load_period_pfh/_load_period_v2v1/_load_period_el, all 4 platforms
-    stacked with a platform-qualified game_id (GameCatalogView1 ids are NOT unique across
+    """Same shape as _load_period_ksk/_load_period_v2v1/_load_period_el, all 4 platforms
+    stacked with a platform-qualified game_id (GameCatalogView ids are NOT unique across
     platforms — see the What's New fix — so a raw numeric id would silently collide here too)."""
     parts = []
-    for p, loader in (("PFH", lambda: _load_period_pfh(start, end)),
+    for p, loader in (("KSK", lambda: _load_period_ksk(start, end)),
                        ("V1", lambda: _load_period_v2v1("V1", start, end)),
                        ("V2", lambda: _load_period_v2v1("V2", start, end)),
-                       ("EdgeLabs", lambda: _load_period_el(start, end))):
+                       ("Aurora", lambda: _load_period_el(start, end))):
         try:
             d = loader()
         except Exception:
@@ -1421,7 +1415,7 @@ _STATE_CENTROIDS = {
     "WI": (44.3, -89.6), "WY": (43.0, -107.5), "DC": (38.9, -77.0),
 }
 
-# Centroids for location codes that show up in CrmLocationView.StateProv but aren't one of
+# Centroids for location codes that show up in PropertyDirectoryView.StateProv but aren't one of
 # the 50 US states + DC — the choropleth (locationmode="USA-states") silently drops anything
 # else with no error, so these get a dot marker instead (see the map code below).
 # Confirmed against the live database on 2026-08-17 (not guessed):
@@ -1432,7 +1426,7 @@ _STATE_CENTROIDS = {
 #     not a real ISO code, just this org's internal shorthand.
 #   - PH and SB both resolve to Sint Maarten locations (Philipsburg, Simpson Bay, Cole Bay) —
 #     the SAME island tagged with two different internal codes. That's a real data-quality
-#     inconsistency in CrmLocationView, not something to silently merge here — both codes are
+#     inconsistency in PropertyDirectoryView, not something to silently merge here — both codes are
 #     plotted as-is (at the same real coordinates) so nothing is hidden, but a fleet-wide
 #     "revenue by region" total will double-count/fragment Sint Maarten until the source data
 #     is cleaned up.
@@ -1450,18 +1444,18 @@ _NON_US_CENTROIDS = {
 @st.cache_data(ttl=1800, show_spinner="Loading footprint…")
 def load_game_footprint(platform, game_id):
     """Lifetime per-location bet/net for ONE game — footprint/concentration only
-    ("is this a real title or one hot store"), not a period breakdown. EdgeLabs has
+    ("is this a real title or one hot store"), not a period breakdown. Aurora has
     no location dimension (casino-based) so this returns empty for it."""
-    if platform == "EdgeLabs":
+    if platform == "Aurora":
         return pd.DataFrame()
     conn = E.get_connection()
-    if platform == "PFH":
+    if platform == "KSK":
         sql = f"""
         SELECT CAST(b.StoreNumber AS VARCHAR) AS loc_id,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev,
             MIN(CAST(b."Date" AS DATE)) AS first_seen, MAX(CAST(b."Date" AS DATE)) AS last_seen
-        FROM BetSpinSummaryCashView3Pong b
+        FROM WagerSummaryViewSolstice b
         WHERE TRY_CAST(b.GameId AS INT) = {int(game_id)}
         GROUP BY CAST(b.StoreNumber AS VARCHAR)
         """
@@ -1471,7 +1465,7 @@ def load_game_footprint(platform, game_id):
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) AS bet,
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) - SUM(CAST(g.TotalWin AS FLOAT)/100.0) AS net_rev,
             MIN(CAST(g.SummaryDate AS DATE)) AS first_seen, MAX(CAST(g.SummaryDate AS DATE)) AS last_seen
-        FROM AnalyticsGameTerminalsGames g
+        FROM TerminalActivityView g
         WHERE g.Id = {int(game_id)}
         GROUP BY CAST(g.SummaryLocationId AS VARCHAR)
         """
@@ -1489,7 +1483,7 @@ def load_lifetime_stores(platform) -> pd.DataFrame:
     """True lifetime distinct-location count per game, one GROUP BY GameId pass over
     the whole unfiltered table, no date bound -- the correct denominator for any
     lifetime-scoped per-store metric. Mirrors load_game_footprint's per-game query
-    but for every game on the platform at once. EdgeLabs has no location dimension
+    but for every game on the platform at once. Aurora has no location dimension
     (casino-based), so this returns empty for it.
 
     Added because Full Roster's "#Stores" was really the *last week's* store count
@@ -1497,20 +1491,20 @@ def load_lifetime_stores(platform) -> pd.DataFrame:
     individually, but reads as a lifetime figure it isn't. This gives the actually-
     lifetime number to show instead.
     """
-    if platform == "EdgeLabs":
+    if platform == "Aurora":
         return pd.DataFrame(columns=["game_id", "stores_lifetime"])
     conn = E.get_connection()
-    if platform == "PFH":
+    if platform == "KSK":
         sql = """
         SELECT TRY_CAST(b.GameId AS INT) AS game_id, COUNT(DISTINCT b.StoreNumber) AS stores_lifetime
-        FROM BetSpinSummaryCashView3Pong b
+        FROM WagerSummaryViewSolstice b
         WHERE TRY_CAST(b.GameId AS INT) IS NOT NULL
         GROUP BY TRY_CAST(b.GameId AS INT)
         """
     else:
         sql = """
         SELECT g.Id AS game_id, COUNT(DISTINCT g.SummaryLocationId) AS stores_lifetime
-        FROM AnalyticsGameTerminalsGames g
+        FROM TerminalActivityView g
         GROUP BY g.Id
         """
     try:
@@ -1522,19 +1516,19 @@ def load_lifetime_stores(platform) -> pd.DataFrame:
         d["stores_lifetime"] = pd.to_numeric(d["stores_lifetime"], errors="coerce")
     return d
 
-# Real geography breakdown — joins each platform's real bet/win data to CrmLocationView
-# (SQL Server, not Oracle). EdgeLabs is casino-based (CasinoName, not a location dimension),
+# Real geography breakdown — joins each platform's real bet/win data to PropertyDirectoryView
+# (SQL Server, not Oracle). Aurora is casino-based (CasinoName, not a location dimension),
 # so it's not included here.
 @st.cache_data(ttl=1800, show_spinner="Loading geography…")
 def load_geo_detail(platform, start, end):
     """Per location x game rows with state / location / account-manager / game attached.
 
     One query per (platform, period); the four page filters are then applied in pandas so
-    changing a filter is instant instead of re-querying. ~14k rows for PFH — small enough
+    changing a filter is instant instead of re-querying. ~14k rows for KSK — small enough
     to hold in memory. Money columns are cents in source, divided by 100 here.
     """
     conn = E.get_connection()
-    if platform == "PFH":
+    if platform == "KSK":
         sql = f"""
         SELECT loc.StateProv AS state, loc.Latitude AS lat, loc.Longitude AS lon,
             ISNULL(loc.BusinessName, 'Unknown') AS location_name,
@@ -1544,9 +1538,9 @@ def load_geo_detail(platform, start, end):
             MAX(gc.Name) AS game_name,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) AS bet,
             SUM(CAST(b.TotalBet AS FLOAT)/100.0) - SUM(CAST(b.TotalWin AS FLOAT)/100.0) AS net_rev
-        FROM BetSpinSummaryCashView3Pong b
-        LEFT JOIN CrmLocationView loc ON CAST(b.StoreNumber AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
-        LEFT JOIN GameCatalogView1 gc ON gc.Id = TRY_CAST(b.GameId AS INT)
+        FROM WagerSummaryViewSolstice b
+        LEFT JOIN PropertyDirectoryView loc ON CAST(b.StoreNumber AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
+        LEFT JOIN GameCatalogView gc ON gc.Id = TRY_CAST(b.GameId AS INT)
         WHERE TRY_CAST(b.GameId AS INT) IS NOT NULL
           AND CAST(b."Date" AS DATE) BETWEEN '{start}' AND '{end}'
         GROUP BY loc.StateProv, loc.Latitude, loc.Longitude, loc.BusinessName, loc.AccountManager, loc.ConfigProduct, TRY_CAST(b.GameId AS INT)
@@ -1561,9 +1555,9 @@ def load_geo_detail(platform, start, end):
             gc.Id AS game_id, gc.Name AS game_name,
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) AS bet,
             SUM(CAST(g.TotalPlay AS FLOAT)/100.0) - SUM(CAST(g.TotalWin AS FLOAT)/100.0) AS net_rev
-        FROM AnalyticsGameTerminalsGames g
-        JOIN GameCatalogView1 gc ON gc.Id = g.Id
-        LEFT JOIN CrmLocationView loc ON CAST(g.SummaryLocationId AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
+        FROM TerminalActivityView g
+        JOIN GameCatalogView gc ON gc.Id = g.Id
+        LEFT JOIN PropertyDirectoryView loc ON CAST(g.SummaryLocationId AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
         WHERE gc.Platform = '{gc_plat}'
           AND CAST(g.SummaryDate AS DATE) BETWEEN '{start}' AND '{end}'
         GROUP BY loc.StateProv, loc.Latitude, loc.Longitude, loc.BusinessName, loc.AccountManager, loc.ConfigProduct, gc.Id, gc.Name
@@ -1591,10 +1585,10 @@ def load_top_players(platform, start, end, limit=8):
     PlayerAccountNumber loyalty-card tap recorded per terminal-day row."""
     conn = E.get_connection()
     try:
-        if platform == "PFH":
+        if platform == "KSK":
             sql = f"""
             SELECT AccountNumber AS player, SUM(CAST(TotalBet AS FLOAT)/100.0) AS bet
-            FROM BetSpinSummaryCashView3Pong
+            FROM WagerSummaryViewSolstice
             WHERE CAST("Date" AS DATE) BETWEEN '{start}' AND '{end}'
             GROUP BY AccountNumber ORDER BY bet DESC LIMIT {limit}
             """
@@ -1602,7 +1596,7 @@ def load_top_players(platform, start, end, limit=8):
             gc_plat = L._GC_PLATFORM.get(platform, platform)
             sql = f"""
             SELECT g.PlayerAccountNumber AS player, SUM(CAST(g.TotalPlay AS FLOAT)/100.0) AS bet
-            FROM AnalyticsGameTerminalsGames g JOIN GameCatalogView1 gc ON gc.Id = g.Id
+            FROM TerminalActivityView g JOIN GameCatalogView gc ON gc.Id = g.Id
             WHERE gc.Platform = '{gc_plat}' AND CAST(g.SummaryDate AS DATE) BETWEEN '{start}' AND '{end}'
             GROUP BY g.PlayerAccountNumber ORDER BY bet DESC LIMIT {limit}
             """
@@ -1621,7 +1615,7 @@ def load_top_players(platform, start, end, limit=8):
 with tab_overview:
     ribbon("Location Overview", f"{floor_label} · revenue by region, property, account manager and game", T2, "OVERVIEW")
 
-    if platform == "EdgeLabs":
+    if platform == "Aurora":
         st.info("The Private Members' Club has no property/region dimension, so this geographic page "
                 "doesn't apply. Use the other tabs for its analysis.")
     else:
@@ -1704,7 +1698,7 @@ with tab_overview:
 
                 with mcol:
                     # One dot per actual property at its real coordinates (from
-                    # CrmLocationView.Latitude/Longitude) — real OpenStreetMap tiles (free, no
+                    # PropertyDirectoryView.Latitude/Longitude) — real OpenStreetMap tiles (free, no
                     # API key). Bubble size = Net Revenue. Properties with no coordinate on file
                     # (shouldn't happen for this data, but defensive) are dropped from the map,
                     # not silently placed at 0,0 — they're still in the bar charts below.
@@ -1835,16 +1829,16 @@ def load_active_players(platform, start, end):
     PlayerAccountNumber) can identify a returning player."""
     conn = E.get_connection()
     try:
-        if platform == "PFH":
-            sql = f"""SELECT COUNT(DISTINCT AccountNumber) AS n FROM BetSpinSummaryCashView3Pong
+        if platform == "KSK":
+            sql = f"""SELECT COUNT(DISTINCT AccountNumber) AS n FROM WagerSummaryViewSolstice
                       WHERE CAST("Date" AS DATE) BETWEEN '{start}' AND '{end}'"""
-        elif platform == "EdgeLabs":
-            sql = f"""SELECT COUNT(DISTINCT AccountNumber) AS n FROM BetSpinSummaryCashView3EdgeLabs
+        elif platform == "Aurora":
+            sql = f"""SELECT COUNT(DISTINCT AccountNumber) AS n FROM WagerSummaryViewAurora
                       WHERE CAST("Date" AS DATE) BETWEEN '{start}' AND '{end}'"""
         else:
             gc_plat = L._GC_PLATFORM.get(platform, platform)
             sql = f"""SELECT COUNT(DISTINCT g.PlayerAccountNumber) AS n
-                      FROM AnalyticsGameTerminalsGames g JOIN GameCatalogView1 gc ON gc.Id = g.Id
+                      FROM TerminalActivityView g JOIN GameCatalogView gc ON gc.Id = g.Id
                       WHERE gc.Platform = '{gc_plat}' AND CAST(g.SummaryDate AS DATE) BETWEEN '{start}' AND '{end}'"""
         d = E.query_df(conn, sql)
         return int(d["n"].iloc[0]) if not d.empty and pd.notna(d["n"].iloc[0]) else 0
@@ -1856,7 +1850,7 @@ def load_active_players(platform, start, end):
 
 def _active_players_for(scope_label, platform_code, start, end):
     if scope_label == "All Floors":
-        return sum(load_active_players(p, start, end) for p in ["PFH", "V2", "V1", "EdgeLabs"])
+        return sum(load_active_players(p, start, end) for p in ["KSK", "V2", "V1", "Aurora"])
     return load_active_players(platform_code, start, end)
 
 
@@ -1900,8 +1894,8 @@ with tab1:
 
     if ags_scope == "All Floors":
         per_game = _combined_period_pg(str(s2), str(e2))
-    elif platform == "PFH":
-        per_game = _load_period_pfh(str(s2), str(e2))
+    elif platform == "KSK":
+        per_game = _load_period_ksk(str(s2), str(e2))
     elif platform in ("V1", "V2"):
         per_game = _load_period_v2v1(platform, str(s2), str(e2))
     else:
@@ -1943,8 +1937,8 @@ with tab1:
     _since_end = str(dt.date.today())
 
     def _load_since_2025(_p):
-        if _p == "PFH":
-            _d = _load_period_pfh(_SINCE_START, _since_end)
+        if _p == "KSK":
+            _d = _load_period_ksk(_SINCE_START, _since_end)
         elif _p in ("V1", "V2"):
             _d = _load_period_v2v1(_p, _SINCE_START, _since_end)
         else:
@@ -1990,7 +1984,7 @@ with tab1:
     life = life.sort_values("bet_since2025", ascending=False, na_position="last").reset_index(drop=True)
 
     # Modeled floor operating cost, as a share of Net Revenue -- not derived from a
-    # real cost feed (none exists for this synthetic clone). Illustrative only.
+    # real cost feed (none exists here). Illustrative only.
     _opex_pct = 0.30
     _profit_dollars = cur_net * (1 - _opex_pct)
     _active_players = _active_players_for(h_label, platform, str(s2), str(e2))
@@ -2100,14 +2094,14 @@ with tab1:
         use_container_width=True, hide_index=True, height=560,
     )
 
-# ══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # TAB — WEEKLY GAMES
-# ══════════════════════════════════════════════════════════════════
-# Streamlit port of the "Game Performance Dashboard" Power BI page: a grid of
-# Top-N-by-Bet($)/Day panels split by platform → product → screen orientation,
-# plus newly-launched games, product share, and the three headline KPIs.
+# ══════════════════════════════════════════════════════════════════════
+# A grid of Top-N-by-Bet($)/Day panels split by platform -> product -> screen
+# orientation, plus newly-launched games, product share, and the three
+# headline KPIs.
 #
-# Two deliberate departures from that report, both because the report is wrong:
+# Two deliberate design choices worth flagging:
 #  1. Its "Horizontal" and "Vertical" panels show identical numbers — the
 #     orientation filter isn't actually applied there. The underlying data does
 #     differ (V2 P2P for 13–19 Jul: vertical $5.66M vs horizontal $5.63M), so
@@ -2122,14 +2116,14 @@ WG_SEGMENTS = [
     ("V2", "sweeps", "vertical", "Sweepstakes — Vertical", "#7B2B3B"),
     ("V2", "pulltabs", "horizontal", "Instant Win — Horizontal", "#2C5A82"),
     ("V2", "pulltabs", "vertical", "Instant Win — Vertical", "#2C5A82"),
-    ("PFH", "gen2", None, "Kiosk Games — Current Gen", "#7A6524"),
-    ("PFH", "gen1", None, "Kiosk Games — Classic Gen", "#4E3B2A"),
+    ("KSK", "gen2", None, "Kiosk Games — Current Gen", "#7A6524"),
+    ("KSK", "gen1", None, "Kiosk Games — Classic Gen", "#4E3B2A"),
 ]
 
 
 def _wg_panel(title, color, rows, total_rtp, total_betday, note=None, top_n=10):
     """One Top-N panel rendered as an HTML table — colored header, in-cell bars,
-    and a sticky total row, matching the source Power BI visual."""
+    and a sticky total row, matching the source reporting visual."""
     max_bet = max([r["bet_day"] for r in rows], default=0) or 1
     body = ""
     for i, r in enumerate(rows[:top_n], start=1):
@@ -2198,11 +2192,11 @@ with tab_weekly:
         st.error(f"Could not load weekly game data: {e}")
 
     if wg.empty:
-        st.info(f"No V2 or PFH activity recorded for {_wg_start} – {_wg_end}.")
+        st.info(f"No V2 or KSK activity recorded for {_wg_start} – {_wg_end}.")
     else:
         # One shared per-day denominator per platform: the number of days in the
         # window that platform actually reported. Using each game's own active-day
-        # count (as the Power BI measure does) makes the column stop summing to its
+        # count (as the source measure does) makes the column stop summing to its
         # own total, which reads as broken; this keeps Bet($)/Day additive.
         _wg_days = {p: max(1, int(g["game_days"].max())) for p, g in wg.groupby("platform")}
         wg["bet_day"] = wg.apply(lambda r: r["bet"] / _wg_days.get(r["platform"], 7), axis=1)
@@ -2210,7 +2204,7 @@ with tab_weekly:
 
         def _wg_slice(plat, seg, orient):
             s = wg[(wg["platform"] == plat)]
-            if plat == "PFH":
+            if plat == "KSK":
                 s = s[s["segment"] == "gen2"] if seg == "gen2" else s[s["segment"] != "gen2"]
             else:
                 s = s[s["segment"] == seg]
@@ -2344,9 +2338,9 @@ with tab_weekly:
                             f"— {_usd(float(_resp['bet'].sum()))} bet")
         st.caption(
             f"Bet ($)/Day = total bet ÷ {_wg_days.get('V2', 7)} reported days (V2) / "
-            f"{_wg_days.get('PFH', 7)} (PFH). Hold % = (total bet − total win) ÷ total bet — the house's "
-            "share of what's wagered. Panels filter on GameCatalogView1.ScreenOrientation "
-            "(V2) and .Codebase (PFH)."
+            f"{_wg_days.get('KSK', 7)} (KSK). Hold % = (total bet − total win) ÷ total bet — the house's "
+            "share of what's wagered. Panels filter on GameCatalogView.ScreenOrientation "
+            "(V2) and .Codebase (KSK)."
             + (" Not shown in the panels above: " + "; ".join(_skipped) + "." if _skipped else ""))
 
 
@@ -2381,10 +2375,10 @@ with tab_new:
             gr_land = pd.DataFrame()
             st.error(f"Land-based load error: {e}")
         try:
-            gr_el = load_edgelabs_releases(wn_days)
+            gr_el = load_aurora_releases(wn_days)
         except Exception as e:
             gr_el = pd.DataFrame()
-            st.error(f"EdgeLabs load error: {e}")
+            st.error(f"Aurora load error: {e}")
 
         gr_df = pd.concat([gr_land, gr_el], ignore_index=True) if not (gr_land.empty and gr_el.empty) else pd.DataFrame()
 
@@ -2392,31 +2386,31 @@ with tab_new:
             cls = gr_df["PlatformProduct"].apply(lambda x: pd.Series(_classify_game_platform(x)))
             gr_df["_tc"], gr_df["_vd"] = cls[0], cls[1]
 
-            # De-dupe PFH/V1 double-tagging: PFH's land-based side runs ON V1, so one real
-            # release gets logged under BOTH tags in CrmUpdateLogView (same Note/Studio/
+            # De-dupe KSK/V1 double-tagging: KSK's land-based side runs ON V1, so one real
+            # release gets logged under BOTH tags in OperationsLogView (same Note/Studio/
             # release date — confirmed live on "ULTIMATE GOAL 10X": 3 rows, all with the
             # identical 144-location count and a null GameId, since the CRM's per-location
             # Platform string was recorded inconsistently across an otherwise single event).
-            # Collapse any (Studio, Note, LastDate) group whose rows are ALL tagged PFH
+            # Collapse any (Studio, Note, LastDate) group whose rows are ALL tagged KSK
             # and/or V1 into one row — but only when they agree on GameId (or all lack one).
             # A genuine GameId conflict means the rows resolved to different catalog games
             # and must NOT be guessed into one.
-            def _dedupe_pfh_v1(df):
+            def _dedupe_ksk_v1(df):
                 out = []
                 for _, grp in df.groupby(["Studio", "Note", "LastDate"], dropna=False):
-                    if len(grp) == 1 or not set(grp["_tc"]).issubset({"PFH", "V1"}):
+                    if len(grp) == 1 or not set(grp["_tc"]).issubset({"KSK", "V1"}):
                         out.append(grp)
                         continue
                     gids = grp["GameId"].dropna().unique()
                     if len(gids) > 1:
                         out.append(grp)  # genuine conflict — don't guess, keep separate
                         continue
-                    rep = (grp[grp["_tc"] == "PFH"].head(1) if (grp["_tc"] == "PFH").any() else grp.head(1)).copy()
+                    rep = (grp[grp["_tc"] == "KSK"].head(1) if (grp["_tc"] == "KSK").any() else grp.head(1)).copy()
                     rep["Locations"] = grp["Locations"].max()
                     out.append(rep)
                 return pd.concat(out, ignore_index=True) if out else df
 
-            gr_df = _dedupe_pfh_v1(gr_df)
+            gr_df = _dedupe_ksk_v1(gr_df)
             gr_df = gr_df.sort_values("LastDate", ascending=False).reset_index(drop=True)
 
             # Enrich with revenue/RTP SINCE EACH ROW'S OWN RELEASE DATE — never lifetime.
@@ -2429,7 +2423,7 @@ with tab_new:
             # jackpot game). Scoping to >= release date fixes both, and is a no-op for
             # genuinely new games since they have no data before their own release anyway.
             _perf_by_plat = {}
-            for _pc in ("PFH", "V1", "V2", "EdgeLabs"):
+            for _pc in ("KSK", "V1", "V2", "Aurora"):
                 _rows = gr_df[(gr_df["_tc"] == _pc) & gr_df["GameId"].notna()]
                 _pairs = tuple(sorted({(int(r["GameId"]), r["LastDate"].strftime("%Y-%m-%d"))
                                         for _, r in _rows.iterrows()}))
@@ -2452,8 +2446,8 @@ with tab_new:
                 lambda v: min((v["net_rev"] / v["total_bet"]) * 100, 99.9) if v and v["total_bet"] > 0 else None)
 
             # ── Platform comparison data — always all 3, regardless of the filter below ──
-            cmp_df = gr_df[gr_df["_tc"].isin(["PFH", "V2", "EdgeLabs"])]
-            cnt_by_plat = cmp_df.groupby("_tc").size().reindex(["PFH", "V2", "EdgeLabs"]).fillna(0).reset_index(name="n")
+            cmp_df = gr_df[gr_df["_tc"].isin(["KSK", "V2", "Aurora"])]
+            cnt_by_plat = cmp_df.groupby("_tc").size().reindex(["KSK", "V2", "Aurora"]).fillna(0).reset_index(name="n")
 
             if plat_filter != "All":
                 gr_df = gr_df[gr_df["_tc"] == plat_filter]
@@ -2673,22 +2667,22 @@ def build_launch_report_bytes():
     # Paired with the real week-0 location count (read directly off gdf, not invented) so a
     # suspiciously thin week-0 (e.g. a 1-2 location pilot day) is visible next to the
     # recorded launch date rather than silently feeding a distorted bet_decay baseline.
-    # NOT applied to EdgeLabs: launch_date there is defined as the first real-money spin
-    # (see load_edgelabs_weekly_all) — there's no separate "soft launch" phase to detect,
+    # NOT applied to Aurora: launch_date there is defined as the first real-money spin
+    # (see load_aurora_weekly_all) — there's no separate "soft launch" phase to detect,
     # and casino count naturally growing after launch (more operators picking the game up)
     # isn't the same thing as a land-based pilot rollout.
-    ramp_r = L.detect_ramp(df, sel_id) if platform != "EdgeLabs" else {"is_ramping": False, "note": ""}
+    ramp_r = L.detect_ramp(df, sel_id) if platform != "Aurora" else {"is_ramping": False, "note": ""}
     w0_stores_r = None
     if "stores" in gdf.columns:
         _w0_rows_r = gdf[gdf["launch_week"] == 0]["stores"].dropna()
         if not _w0_rows_r.empty:
             w0_stores_r = int(_w0_rows_r.iloc[0])
-    # Week-0 player count — a soft-launch/test period on Pong (PFH's online identity)
+    # Week-0 player count — a soft-launch/test period on Solstice (KSK's online identity)
     # shows up as a handful of test accounts before the real launch weeks later.
-    # NOT applied to EdgeLabs: there, launch = first spin by definition, so a thin
+    # NOT applied to Aurora: there, launch = first spin by definition, so a thin
     # week-0 player count isn't a "soft launch" signal, just early ramp-up.
     w0_players_r = None
-    if platform != "EdgeLabs" and "players" in gdf.columns:
+    if platform != "Aurora" and "players" in gdf.columns:
         _w0_prows_r = gdf[gdf["launch_week"] == 0]["players"].dropna()
         if not _w0_prows_r.empty:
             w0_players_r = int(_w0_prows_r.iloc[0])
@@ -2740,8 +2734,8 @@ def build_launch_report_bytes():
     # Cannibalization — only if the game has cleared the same 4-week gate the live check uses
     cannib_rows_r = []
     cannib_note_r = None
-    if platform == "EdgeLabs":
-        cannib_note_r = "Not available — EdgeLabs is casino-based (no location dimension)."
+    if platform == "Aurora":
+        cannib_note_r = "Not available — Aurora is casino-based (no location dimension)."
     elif weeks_live_r < 4:
         cannib_note_r = "Not enough live weeks yet (<4) to run a before/after location comparison."
     else:
@@ -2895,7 +2889,7 @@ def build_launch_report_bytes():
 
     # 3. The Money ------------------------------------------------------------
     h_section(3, "The Money")
-    p_body("Game Net is the house hold (Bet − Win) — not Pong's royalty. A confirmed royalty figure isn't wired into "
+    p_body("Game Net is the house hold (Bet − Win) — not Solstice's royalty. A confirmed royalty figure isn't wired into "
           "this report yet, so every dollar figure below is Game Net.", italic=True, size=9.5)
     kv_line(f"Week {max_wk_r} Bet Handle", _usd(cv_bet_r))
     kv_line(f"Week {max_wk_r} Net Revenue", _usd(cv_net_r))
@@ -3127,7 +3121,7 @@ with tab_track:
             _cp_hold_d = _period_delta(_cp_hold, _cp_hold_pri) if (_cp_hold is not None and _cp_hold_pri is not None) else None
         krow([
             {"label": "Game Net ($)", "value": _usd(_cp_net), "delta_pct": _cp_net_d,
-             "sub": "house hold, not Pong royalty"},
+             "sub": "house hold, not Solstice royalty"},
             {"label": "Bet ($)", "value": _usd(_cp_bet), "delta_pct": _cp_bet_d},
             {"label": "Hold %", "value": _pct(_cp_hold, 2) if _cp_hold is not None else "–", "delta_pct": _cp_hold_d},
         ])
@@ -3181,13 +3175,13 @@ with tab_track:
             n_ok, n_wa, n_nr = (t2["Overall Status"] == "ON TRACK").sum(), (t2["Overall Status"] == "WATCH").sum(), (t2["Overall Status"] == "NEEDS REVIEW").sum()
 
             # ── Platform mix — always all 3 "other platforms", plus V2's own product mix.
-            # Two separate donuts instead of one combined cross-platform pie — V1/PFH/EdgeLabs
-            # don't have a useful Product breakdown (PFH's catalog Product is just one coarse
-            # value, "pfh-edgelabs"/"Unknown" — confirmed earlier), so they're compared to each
+            # Two separate donuts instead of one combined cross-platform pie — V1/KSK/Aurora
+            # don't have a useful Product breakdown (KSK's catalog Product is just one coarse
+            # value, "ksk-aurora"/"Unknown" — confirmed earlier), so they're compared to each
             # other as whole platforms; V2 is the one platform with real Product diversity
             # (P2P/PullTabs/Sweeps/Class2/HHR), so it gets its own breakdown.
             _op_vals = {}
-            for _op in ("V1", "PFH", "EdgeLabs"):
+            for _op in ("V1", "KSK", "Aurora"):
                 _op_cal = _load_calendar_daily(_op, str(_cp_s), str(_cp_e))
                 _op_vals[_op] = float(_op_cal["net_rev"].sum()) if not _op_cal.empty else 0.0
 
@@ -3224,9 +3218,9 @@ with tab_track:
                     st.info("No game-category data for this period.")
 
             # ── Top/Bottom 5 by Net + Biggest Movers — period-scoped, compact (one page) ──
-            if platform == "PFH":
-                _prod_pg_cur = _load_period_pfh(str(_cp_s), str(_cp_e))
-                _prod_pg_pri = _load_period_pfh(str(_cp_ps), str(_cp_pe)) if ceo_period != "Lifetime" else pd.DataFrame()
+            if platform == "KSK":
+                _prod_pg_cur = _load_period_ksk(str(_cp_s), str(_cp_e))
+                _prod_pg_pri = _load_period_ksk(str(_cp_ps), str(_cp_pe)) if ceo_period != "Lifetime" else pd.DataFrame()
             elif platform in ("V1", "V2"):
                 _prod_pg_cur = _load_period_v2v1(platform, str(_cp_s), str(_cp_e))
                 _prod_pg_pri = _load_period_v2v1(platform, str(_cp_ps), str(_cp_pe)) if ceo_period != "Lifetime" else pd.DataFrame()
@@ -3368,20 +3362,20 @@ with tab_track:
             eh = "NEEDS REVIEW"
         eh_kind = {"ON TRACK": "g", "WATCH": "a", "NEEDS REVIEW": "r"}[eh]
 
-        # NOT applied to EdgeLabs — see the report generator's identical guard above for why
+        # NOT applied to Aurora — see the report generator's identical guard above for why
         # (launch_date there = first real-money spin; no separate "soft launch" phase exists).
-        ramp = L.detect_ramp(df, sel_id) if platform != "EdgeLabs" else {"is_ramping": False, "note": ""}
+        ramp = L.detect_ramp(df, sel_id) if platform != "Aurora" else {"is_ramping": False, "note": ""}
         w0_stores = None
         if "stores" in gdf.columns:
             _w0_rows = gdf[gdf["launch_week"] == 0]["stores"].dropna()
             if not _w0_rows.empty:
                 w0_stores = int(_w0_rows.iloc[0])
-        # Week-0 player count — a soft-launch/test period on Pong (PFH's online identity)
+        # Week-0 player count — a soft-launch/test period on Solstice (KSK's online identity)
         # shows up as a handful of test accounts before the real launch weeks later.
-        # NOT applied to EdgeLabs: there, launch = first spin by definition, so a thin
+        # NOT applied to Aurora: there, launch = first spin by definition, so a thin
         # week-0 player count isn't a "soft launch" signal, just early ramp-up.
         w0_players = None
-        if platform != "EdgeLabs" and "players" in gdf.columns:
+        if platform != "Aurora" and "players" in gdf.columns:
             _w0_prows = gdf[gdf["launch_week"] == 0]["players"].dropna()
             if not _w0_prows.empty:
                 w0_players = int(_w0_prows.iloc[0])
@@ -3395,9 +3389,9 @@ with tab_track:
         # best_match_score/ms_data params are accepted but never referenced inside
         # compute_quick_score() (confirmed by reading launch.py) — passed as inert defaults.
         qs_player_df = pd.DataFrame()
-        if platform == "EdgeLabs":
+        if platform == "Aurora":
             try:
-                qs_player_df = load_edgelabs_player_weeks(int(sel_id), str(meta["launch_date"]), "EdgeLabs")
+                qs_player_df = load_aurora_player_weeks(int(sel_id), str(meta["launch_date"]), "Aurora")
             except Exception:
                 pass
         elif "players" in gdf.columns and gdf["players"].notna().any():
@@ -3416,8 +3410,8 @@ with tab_track:
         rank_n = (rank_list.index(sel_id) + 1) if sel_id in rank_list else None
 
         _r_end, _r_start = dt.date.today(), dt.date.today() - dt.timedelta(weeks=8)
-        if platform == "PFH":
-            _recent_pg = _load_period_pfh(str(_r_start), str(_r_end))
+        if platform == "KSK":
+            _recent_pg = _load_period_ksk(str(_r_start), str(_r_end))
         elif platform in ("V1", "V2"):
             _recent_pg = _load_period_v2v1(platform, str(_r_start), str(_r_end))
         else:
@@ -3544,7 +3538,7 @@ with tab_track:
             {"label": f"Week {max_wk_t} Bet", "value": _usd(cv_bet)},
             {"label": f"Week {max_wk_t} Net Rev", "value": _usd(cv_net)},
             {"label": "Hold %", "value": _pct(cv_hold) if cv_hold is not None else "–"},
-            {"label": "Lifetime Game Net", "value": _usd(game_lifetime_net), "sub": "house hold, not Pong royalty"},
+            {"label": "Lifetime Game Net", "value": _usd(game_lifetime_net), "sub": "house hold, not Solstice royalty"},
             {"label": "Tenure", "value": tenure, "sub": f"{weeks_live} weeks live"},
             {"label": "Locations", "value": f"{n_locs:,}" if n_locs else "–"},
             {"label": "Top Location Share", "value": f'{_pct(top_share) if top_share is not None else "–"}'
@@ -4188,8 +4182,8 @@ with tab_similar:
             tgt_dt = pd.to_datetime(meta["launch_date"], errors="coerce")
             if pd.isna(tgt_dt):
                 st.info("Launch date unavailable — cannot compute cannibalization window.")
-            elif platform == "EdgeLabs":
-                st.info("EdgeLabs is casino-based (no location dimension) — cannibalization can't be scoped by location here.")
+            elif platform == "Aurora":
+                st.info("Aurora is casino-based (no location dimension) — cannibalization can't be scoped by location here.")
             else:
                 cw = 4
                 before_start, before_end = tgt_dt - pd.Timedelta(weeks=cw), tgt_dt - pd.Timedelta(days=1)
@@ -4399,8 +4393,8 @@ with tab_full:
         if sel_kpi_col == "stores":
             foot_fb = load_game_footprint(platform, sel_id)
             if foot_fb.empty:
-                st.caption("No location-level footprint data available for this game." if platform != "EdgeLabs"
-                           else "EdgeLabs is casino-based (no location dimension) — footprint doesn't apply.")
+                st.caption("No location-level footprint data available for this game." if platform != "Aurora"
+                           else "Aurora is casino-based (no location dimension) — footprint doesn't apply.")
             else:
                 n_locs_fb = int(foot_fb["loc_id"].nunique())
                 total_net_fb = float(foot_fb["net_rev"].sum())
@@ -4541,7 +4535,7 @@ with tab_full:
             _df_ids_fb = set(df["game_id"].unique().tolist())
             _family_ids_fb = {i for i in _family_ids_fb if i in _df_ids_fb}
             if not _family_ids_fb:
-                st.caption("This title has no tracked math-model relationship (GameCatalogView1.SkinOf) — nothing to split. "
+                st.caption("This title has no tracked math-model relationship (GameCatalogView.SkinOf) — nothing to split. "
                            "Only ~23% of titles have this populated, so absence doesn't necessarily mean this is a standalone math model.")
             else:
                 _all_ids_fb = _family_ids_fb | {sel_id}
@@ -4557,7 +4551,7 @@ with tab_full:
                     st.markdown('<div class="card"><div class="card-title">Lifetime Game Net — titles sharing this math model</div>', unsafe_allow_html=True)
                     st.plotly_chart(fig_mix, use_container_width=True, theme=None)
                     st.markdown('</div>', unsafe_allow_html=True)
-                    st.caption(f"{len(_all_ids_fb)} titles on {platform} share this math model (via GameCatalogView1.SkinOf), "
+                    st.caption(f"{len(_all_ids_fb)} titles on {platform} share this math model (via GameCatalogView.SkinOf), "
                               "despite having different names/themes — this is expected, not an error. Scoped to this "
                               "platform only; the same math model on another platform isn't included here.")
 
@@ -4566,7 +4560,7 @@ with tab_full:
 # ══════════════════════════════════════════════════════════════════
 with tab_social:
     # Platform comes from the sidebar selector rather than a second control here.
-    # Every floor now has a loyalty-account signal: PFH/EdgeLabs via AccountNumber,
+    # Every floor now has a loyalty-account signal: KSK/Aurora via AccountNumber,
     # V1/V2 via the PlayerAccountNumber loyalty-card tap on each terminal-day row.
     # When a specific game is selected (not "All Games"), scope every query to that
     # one game_id and default the date range to its own lifetime instead of a
@@ -4593,9 +4587,9 @@ with tab_social:
         soc_end = st.date_input("End", value=dt.date.today(), key=f"soc_end{_soc_key}")
 
     soc_casino, soc_agg, soc_ccy = "All", "All", None
-    if soc_platform == "EdgeLabs":
+    if soc_platform == "Aurora":
         try:
-            _soc_casinos, _soc_aggs = _load_social_filters("EdgeLabs")
+            _soc_casinos, _soc_aggs = _load_social_filters("Aurora")
         except Exception:
             _soc_casinos, _soc_aggs = [], []
         sf4, sf5, sf6 = st.columns(3)
@@ -4604,7 +4598,7 @@ with tab_social:
         with sf5:
             soc_agg = st.selectbox("Aggregator", ["All"] + _soc_aggs, key="soc_agg")
         with sf6:
-            # No "All" here on purpose — EdgeLabs mixes GC/SC/WOW in one column and
+            # No "All" here on purpose — Aurora mixes GC/SC/WOW in one column and
             # summing money across them is meaningless (GC alone reads as 23,825% RTP).
             _ccy_opts = ["SC", "GC", "WOW"]
             _ccy_idx = 0
@@ -4624,7 +4618,7 @@ with tab_social:
                             _ccy_note = f"Defaulted to {_c} — this game has no SC activity."
                             break
             soc_ccy = st.selectbox("Currency", _ccy_opts, index=_ccy_idx, key=f"soc_ccy{_soc_key}",
-                                    help="EdgeLabs records Gold Coins (GC), Sweeps Coins (SC) and WOW in one "
+                                    help="Aurora records Gold Coins (GC), Sweeps Coins (SC) and WOW in one "
                                          "table. Money metrics are only coherent within a single currency, so "
                                          "one must be picked. GC is play-money — its RTP/ARPDAU aren't real economics.")
             if _ccy_note:
@@ -4641,7 +4635,7 @@ with tab_social:
             soc_by_game = (_load_social_by_game(soc_platform, soc_casino, soc_agg, _s, _e, soc_ccy)
                            if not soc_scoped else pd.DataFrame())
             soc_by_casino = (_load_social_by_casino(soc_platform, soc_agg, _s, _e, soc_ccy, soc_game_id)
-                             if soc_platform == "EdgeLabs" else pd.DataFrame())
+                             if soc_platform == "Aurora" else pd.DataFrame())
             soc_totals = _load_social_totals(soc_platform, soc_casino, soc_agg, _s, _e, soc_ccy, soc_game_id)
         except Exception as e:
             st.error(f"Could not load social casino data: {e}")
@@ -4744,8 +4738,8 @@ with tab_social:
             if soc_scoped:
                 # Already scoped to one game — "# Players by Game" would just be a single
                 # bar, so it's dropped entirely. "# Players by Casino" is still useful for
-                # EdgeLabs (which casino brands carry this specific game); PFH has none.
-                if soc_platform == "EdgeLabs" and not soc_by_casino.empty:
+                # Aurora (which casino brands carry this specific game); KSK has none.
+                if soc_platform == "Aurora" and not soc_by_casino.empty:
                     top_c = soc_by_casino.head(12)
                     fig_c = go.Figure(go.Bar(x=top_c["players"], y=top_c["CasinoName"], orientation="h",
                         marker_color=MOVE_UP, text=[f"{v:,.0f}" for v in top_c["players"]], textposition="outside",
@@ -4770,7 +4764,7 @@ with tab_social:
                     else:
                         st.info("No per-game player data in this window.")
                 with pc4:
-                    if soc_platform == "EdgeLabs" and not soc_by_casino.empty:
+                    if soc_platform == "Aurora" and not soc_by_casino.empty:
                         top_c = soc_by_casino.head(12)
                         fig_c = go.Figure(go.Bar(x=top_c["players"], y=top_c["CasinoName"], orientation="h",
                             marker_color=MOVE_UP, text=[f"{v:,.0f}" for v in top_c["players"]], textposition="outside",
@@ -4781,7 +4775,7 @@ with tab_social:
                         st.markdown('</div>', unsafe_allow_html=True)
                     else:
                         st.markdown('<div class="card"><div class="card-title"># Players by Casino</div>', unsafe_allow_html=True)
-                        st.caption("Only the Private Members' Club (EdgeLabs) tracks separate casino brands — "
+                        st.caption("Only the Private Members' Club (Aurora) tracks separate casino brands — "
                                   "nothing to break out here for this floor. Switch the sidebar Gaming Floor to "
                                   "Private Members' Club to see the 20+ casino-brand breakdown.")
                         st.markdown('</div>', unsafe_allow_html=True)

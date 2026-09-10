@@ -7,12 +7,12 @@ statistical expectation bands (Holt-damped / SES ensemble with MAD-robust σ,
 rolling-origin backtest, honest 1-step-ahead "vs forecast" KPI).
 
 Data sources
-  PFH  : BetSpinSummaryCashView3  (PlatformName='Pong', CasinoName='PFH')
-  V2/V1: AnalyticsGameTerminalsGames joined to GameCatalogView1
+  KSK  : WagerSummaryView  (PlatformName='Solstice', CasinoName='KSK')
+  V2/V1: TerminalActivityView joined to GameCatalogView
 
 Monetary units
-  BetSpinSummaryCashView3      : TotalBet, TotalWin in cents → /100 to USD
-  AnalyticsGameTerminalsGames  : TotalPlay, TotalWin in cents → /100 to USD
+  WagerSummaryView      : TotalBet, TotalWin in cents → /100 to USD
+  TerminalActivityView  : TotalPlay, TotalWin in cents → /100 to USD
 """
 from __future__ import annotations
 import math
@@ -28,8 +28,8 @@ except ImportError:
 
 EPS = 1e-9
 
-# Platform code → GameCatalogView1.Platform value
-_GC_PLATFORM = {"PFH": "igaming", "V2": "v2", "V1": "v1"}
+# Platform code → GameCatalogView.Platform value
+_GC_PLATFORM = {"KSK": "igaming", "V2": "v2", "V1": "v1"}
 
 # HR games have IDs ≥ 95000; exclude from benchmark pool
 def _is_hr(game_id: int) -> bool:
@@ -499,10 +499,10 @@ def dtw_distance(s1, s2) -> float:
 
 
 # ── Bulk weekly loaders ───────────────────────────────────────────────
-def load_pfh_weekly_all(conn) -> pd.DataFrame:
+def load_ksk_weekly_all(conn) -> pd.DataFrame:
     """
-    Single query: all PFH igaming games, weekly series indexed from each
-    game's first observed date in BetSpinSummaryCashView3.
+    Single query: all KSK igaming games, weekly series indexed from each
+    game's first observed date in WagerSummaryView.
     Returns one row per (game_id, launch_week).
     """
     sql = """
@@ -518,19 +518,19 @@ def load_pfh_weekly_all(conn) -> pd.DataFrame:
         COUNT(DISTINCT b.AccountNumber)                                AS players,
         COUNT(DISTINCT b.StoreNumber)                                  AS stores,
         MAX(CAST(b."Date" AS DATE))                                    AS _last_day
-    FROM BetSpinSummaryCashView3 b
-    JOIN GameCatalogView1 gc
+    FROM WagerSummaryView b
+    JOIN GameCatalogView gc
         ON gc.Id = TRY_CAST(b.GameId AS INT)
     JOIN (
         SELECT TRY_CAST(GameId AS INT) AS gid,
                MIN(CAST("Date" AS DATE))  AS launch_date
-        FROM BetSpinSummaryCashView3
-        WHERE PlatformName = 'Pong' AND CasinoName = 'PFH'
+        FROM WagerSummaryView
+        WHERE PlatformName = 'Solstice' AND CasinoName = 'KSK'
           AND TRY_CAST(GameId AS INT) IS NOT NULL
         GROUP BY GameId
     ) fd ON fd.gid = TRY_CAST(b.GameId AS INT)
     WHERE gc.Platform = 'igaming'
-      AND b.PlatformName = 'Pong' AND b.CasinoName = 'PFH'
+      AND b.PlatformName = 'Solstice' AND b.CasinoName = 'KSK'
       AND TRY_CAST(b.GameId AS INT) IS NOT NULL
       AND CAST(b."Date" AS DATE) >= fd.launch_date
     GROUP BY gc.Id, gc.Name, gc.Codebase, fd.launch_date,
@@ -547,7 +547,7 @@ def load_pfh_weekly_all(conn) -> pd.DataFrame:
 
 def load_v2v1_weekly_all(conn, platform: str) -> pd.DataFrame:
     """
-    Single query: all V2 (or V1) games, weekly series from AnalyticsGameTerminalsGames.
+    Single query: all V2 (or V1) games, weekly series from TerminalActivityView.
     platform must be 'V2' or 'V1'.
     """
     gc_plat = _GC_PLATFORM[platform]
@@ -564,11 +564,11 @@ def load_v2v1_weekly_all(conn, platform: str) -> pd.DataFrame:
         COUNT(DISTINCT g.PlayerAccountNumber)                             AS players,
         COUNT(DISTINCT g.SummaryLocationId)                               AS stores,
         MAX(CAST(g.SummaryDate AS DATE))                                  AS _last_day
-    FROM AnalyticsGameTerminalsGames g
-    JOIN GameCatalogView1 gc ON gc.Id = g.Id
+    FROM TerminalActivityView g
+    JOIN GameCatalogView gc ON gc.Id = g.Id
     JOIN (
         SELECT Id, MIN(CAST(SummaryDate AS DATE)) AS launch_date
-        FROM AnalyticsGameTerminalsGames
+        FROM TerminalActivityView
         GROUP BY Id
     ) fd ON fd.Id = g.Id
     WHERE gc.Platform = '{gc_plat}'
@@ -585,11 +585,11 @@ def load_v2v1_weekly_all(conn, platform: str) -> pd.DataFrame:
     return df
 
 
-def load_edgelabs_weekly_all(conn) -> pd.DataFrame:
+def load_aurora_weekly_all(conn) -> pd.DataFrame:
     """
-    All EdgeLabs iGaming games, weekly series from BetSpinSummaryCashView3.
-    Launch date = first real-money spin date per game (no CRM entry for EdgeLabs).
-    stores = COUNT(DISTINCT CasinoName) — the EdgeLabs equivalent of locations.
+    All Aurora iGaming games, weekly series from WagerSummaryView.
+    Launch date = first real-money spin date per game (no CRM entry for Aurora).
+    stores = COUNT(DISTINCT CasinoName) — the Aurora equivalent of locations.
     """
     sql = """
     SELECT
@@ -604,18 +604,18 @@ def load_edgelabs_weekly_all(conn) -> pd.DataFrame:
         COUNT(DISTINCT b.AccountNumber)                                 AS players,
         COUNT(DISTINCT b.CasinoName)                                    AS stores,
         MAX(CAST(b."Date" AS DATE))                                     AS _last_day
-    FROM BetSpinSummaryCashView3 b
-    LEFT JOIN GameCatalogView1 gc
+    FROM WagerSummaryView b
+    LEFT JOIN GameCatalogView gc
         ON gc.Id = TRY_CAST(b.GameId AS INT)
     JOIN (
         SELECT TRY_CAST(GameId AS INT) AS gid,
                MIN(CAST("Date" AS DATE)) AS launch_date
-        FROM BetSpinSummaryCashView3
-        WHERE PlatformName = 'EdgeLabs'
+        FROM WagerSummaryView
+        WHERE PlatformName = 'Aurora'
           AND TRY_CAST(GameId AS INT) IS NOT NULL
         GROUP BY GameId
     ) fd ON fd.gid = TRY_CAST(b.GameId AS INT)
-    WHERE b.PlatformName = 'EdgeLabs'
+    WHERE b.PlatformName = 'Aurora'
       AND TRY_CAST(b.GameId AS INT) IS NOT NULL
       AND CAST(b."Date" AS DATE) >= fd.launch_date
     GROUP BY TRY_CAST(b.GameId AS INT), fd.launch_date,
@@ -767,7 +767,7 @@ def compute_quick_score(gdf: "pd.DataFrame",
             score_2 = {"label": "Down",  "color": "red",    "reason": reason}
 
     # ── Score 3: Player Interest ──────────────────────────────────────
-    # Use real player headcounts if available (PFH/EdgeLabs), else bet_decay vs peer median
+    # Use real player headcounts if available (KSK/Aurora), else bet_decay vs peer median
     _use_real_players = (
         player_df is not None
         and not player_df.empty
@@ -823,7 +823,7 @@ def compute_quick_score(gdf: "pd.DataFrame",
 
 # ── Derived KPIs ─────────────────────────────────────────────────────
 def _add_derived(df: pd.DataFrame) -> pd.DataFrame:
-    """Add net_rev, hold_pct, avg_bet, bet_decay, player_decay (PFH only).
+    """Add net_rev, hold_pct, avg_bet, bet_decay, player_decay (KSK only).
 
     hold_pct/bet_decay/player_decay are all "current value as a % of a reference
     point" ratios, not deltas -- the one ratio family in this app where a value
@@ -872,12 +872,12 @@ def load_game_loc_types(conn, platform: str) -> pd.DataFrame:
     """
     Returns dominant ConfigProduct (loc_type) per game_id.
     Dominant = whichever ConfigProduct contributed the most TotalBet for that game.
-    Joins BetSpinSummaryCashView3Pong/EdgeLabs → CrmLocationView on StoreNumber=LocationId.
+    Joins WagerSummaryViewSolstice/Aurora → PropertyDirectoryView on StoreNumber=LocationId.
     """
-    if platform == "PFH":
-        src = "BetSpinSummaryCashView3Pong"
+    if platform == "KSK":
+        src = "WagerSummaryViewSolstice"
     elif platform in ("V2", "V1"):
-        src = "BetSpinSummaryCashView3EdgeLabs"
+        src = "WagerSummaryViewAurora"
     else:
         return pd.DataFrame(columns=["game_id", "loc_type"])
     sql = f"""
@@ -892,7 +892,7 @@ def load_game_loc_types(conn, platform: str) -> pd.DataFrame:
                 ORDER BY SUM(CAST(b.TotalBet AS FLOAT)) DESC
             ) AS rn
         FROM {src} b
-        LEFT JOIN CrmLocationView loc
+        LEFT JOIN PropertyDirectoryView loc
             ON CAST(b.StoreNumber AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
         WHERE TRY_CAST(b.GameId AS INT) IS NOT NULL
           AND loc.ConfigProduct IS NOT NULL
@@ -911,20 +911,20 @@ def load_game_loc_type_weekly(conn, game_id: int, platform: str) -> pd.DataFrame
     Returns weekly bet handle + net rev per location type for a single game.
     Used for the Location Type Breakdown toggle.
     """
-    if platform == "PFH":
+    if platform == "KSK":
         sql = f"""
         SELECT
             loc.ConfigProduct AS loc_type,
             (DATEDIFF('day', fd.launch_date, CAST(b."Date" AS DATE)) // 7) AS launch_week,
             SUM(CAST(b.TotalBet AS FLOAT) / 100.0) AS bet_handle,
             SUM(CAST(b.TotalBet AS FLOAT) / 100.0) - SUM(CAST(b.TotalWin AS FLOAT) / 100.0) AS net_rev
-        FROM BetSpinSummaryCashView3Pong b
+        FROM WagerSummaryViewSolstice b
         JOIN (
             SELECT MIN(CAST("Date" AS DATE)) AS launch_date
-            FROM BetSpinSummaryCashView3Pong
+            FROM WagerSummaryViewSolstice
             WHERE TRY_CAST(GameId AS INT) = {int(game_id)}
         ) fd ON 1=1
-        LEFT JOIN CrmLocationView loc
+        LEFT JOIN PropertyDirectoryView loc
             ON CAST(b.StoreNumber AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
         WHERE TRY_CAST(b.GameId AS INT) = {int(game_id)}
           AND loc.ConfigProduct IS NOT NULL
@@ -940,14 +940,14 @@ def load_game_loc_type_weekly(conn, game_id: int, platform: str) -> pd.DataFrame
             (DATEDIFF('day', fd.launch_date, CAST(g.SummaryDate AS DATE)) // 7) AS launch_week,
             SUM(CAST(g.TotalPlay AS FLOAT) / 100.0) AS bet_handle,
             SUM(CAST(g.TotalPlay AS FLOAT) / 100.0) - SUM(CAST(g.TotalWin AS FLOAT) / 100.0) AS net_rev
-        FROM AnalyticsGameTerminalsGames g
-        JOIN GameCatalogView1 gc ON gc.Id = g.Id
+        FROM TerminalActivityView g
+        JOIN GameCatalogView gc ON gc.Id = g.Id
         JOIN (
             SELECT MIN(CAST(SummaryDate AS DATE)) AS launch_date
-            FROM AnalyticsGameTerminalsGames
+            FROM TerminalActivityView
             WHERE Id = {int(game_id)}
         ) fd ON 1=1
-        LEFT JOIN CrmLocationView loc
+        LEFT JOIN PropertyDirectoryView loc
             ON CAST(g.SummaryLocationId AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
         WHERE gc.Id = {int(game_id)}
           AND gc.Platform = '{gc_plat}'
@@ -964,7 +964,7 @@ def load_game_loc_type_weekly(conn, game_id: int, platform: str) -> pd.DataFrame
 def load_game_terminal_types(conn, platform: str) -> pd.DataFrame:
     """
     Returns dominant terminal orientation (H / V / Mixed) per game_id for V2/V1.
-    Uses CrmLocationView columns: "H-Wooden", "H-Metal", "BarTop" → Horizontal
+    Uses PropertyDirectoryView columns: "H-Wooden", "H-Metal", "BarTop" → Horizontal
                                    "V-Wooden", "V-Metal", "DualScreen" → Vertical
     Dominant = whichever orientation had more total terminals across all locations
     the game appeared in, weighted by TotalBet.
@@ -997,8 +997,8 @@ def load_game_terminal_types(conn, platform: str) -> pd.DataFrame:
                 ) THEN 'Vertical'
                 ELSE 'Mixed'
             END AS terminal_type
-        FROM BetSpinSummaryCashView3EdgeLabs b
-        LEFT JOIN CrmLocationView loc
+        FROM WagerSummaryViewAurora b
+        LEFT JOIN PropertyDirectoryView loc
             ON CAST(b.StoreNumber AS VARCHAR) = CAST(loc.LocationId AS VARCHAR)
         WHERE TRY_CAST(b.GameId AS INT) IS NOT NULL
         GROUP BY TRY_CAST(b.GameId AS INT)
@@ -1164,12 +1164,12 @@ def load_platform_data(conn, platform: str) -> pd.DataFrame:
       bet_handle, total_win, spins, players, stores,
       net_rev, hold_pct, avg_bet, bet_decay, arpu, spp, player_decay
     """
-    if platform == "PFH":
-        raw = load_pfh_weekly_all(conn)
+    if platform == "KSK":
+        raw = load_ksk_weekly_all(conn)
     elif platform in ("V2", "V1"):
         raw = load_v2v1_weekly_all(conn, platform)
-    elif platform == "EdgeLabs":
-        raw = load_edgelabs_weekly_all(conn)
+    elif platform == "Aurora":
+        raw = load_aurora_weekly_all(conn)
     else:
         raise ValueError(f"Unknown platform: {platform}")
     if raw.empty:
@@ -2120,7 +2120,7 @@ def load_live_player_segments(conn) -> pd.DataFrame:
     """
     Run the full player segmentation pipeline live from SQL.
     Matches Player Insights (app.py) exactly:
-      - Source: BetSpinSummaryCashView3 with PlatformName='Pong' AND CasinoName='PFH'
+      - Source: WagerSummaryView with PlatformName='Solstice' AND CasinoName='KSK'
       - Window: 2026-01-01 to MAX(Date) in DB (same fixed start as Player Insights)
     Returns a DataFrame matching the PlayerSegmentation.csv schema:
     AccountNumber, Cluster, State, PrimaryStoreId, PrimaryStoreName,
@@ -2133,8 +2133,8 @@ def load_live_player_segments(conn) -> pd.DataFrame:
     # Use MAX date in DB as as_of (matches Player Insights get_latest_date() call)
     try:
         cur = conn.cursor()
-        cur.execute("SELECT MAX(\"Date\") FROM BetSpinSummaryCashView3 "
-                    "WHERE PlatformName='Pong' AND CasinoName='PFH' AND \"Date\" >= '2026-01-01'")
+        cur.execute("SELECT MAX(\"Date\") FROM WagerSummaryView "
+                    "WHERE PlatformName='Solstice' AND CasinoName='KSK' AND \"Date\" >= '2026-01-01'")
         row = cur.fetchone()
         as_of = str(row[0])[:10] if row and row[0] else datetime.date.today().isoformat()
     except Exception:
@@ -2147,8 +2147,8 @@ def load_live_player_segments(conn) -> pd.DataFrame:
       SELECT AccountNumber, StoreNumber, Date,
              SUM(CAST(TotalBet AS BIGINT)) AS DailyBet_cents,
              SUM(Spins) AS DailySpins
-      FROM BetSpinSummaryCashView3
-      WHERE PlatformName='Pong' AND CasinoName='PFH'
+      FROM WagerSummaryView
+      WHERE PlatformName='Solstice' AND CasinoName='KSK'
         AND Date >= '{window}' AND Date <= '{as_of}'
       GROUP BY AccountNumber, StoreNumber, Date
     )
@@ -2170,15 +2170,15 @@ def load_live_player_segments(conn) -> pd.DataFrame:
       SELECT b.AccountNumber, b.StoreNumber,
              SUM(CAST(b.TotalBet AS BIGINT)) AS WindowBet,
              ROW_NUMBER() OVER (PARTITION BY b.AccountNumber ORDER BY SUM(CAST(b.TotalBet AS BIGINT)) DESC) AS rn
-      FROM BetSpinSummaryCashView3 b
-      WHERE b.PlatformName='Pong' AND b.CasinoName='PFH'
+      FROM WagerSummaryView b
+      WHERE b.PlatformName='Solstice' AND b.CasinoName='KSK'
         AND b.Date >= '{window}' AND b.Date <= '{as_of}'
       GROUP BY b.AccountNumber, b.StoreNumber
     )
     SELECT ps.AccountNumber, ps.StoreNumber AS PrimaryStoreId,
            c.StateProv AS State, c.BusinessName AS PrimaryStoreName
     FROM psv ps
-    LEFT JOIN CrmLocationView c ON CAST(ps.StoreNumber AS VARCHAR(50)) = c.LocationId
+    LEFT JOIN PropertyDirectoryView c ON CAST(ps.StoreNumber AS VARCHAR(50)) = c.LocationId
     WHERE ps.rn = 1
     """
 
@@ -2263,10 +2263,10 @@ def load_weekly_segment_mechanic_bets(conn, window_start: str = "2025-10-01", as
         YEAR(b.Date) * 100 + DATEPART('week', b.Date) AS year_week,
         MIN(b.Date)                                      AS week_start,
         SUM(CAST(b.TotalBet AS BIGINT)) / 100.0         AS BetVolume
-    FROM BetSpinSummaryCashView3 b
-    JOIN GameCatalogView1 gc
+    FROM WagerSummaryView b
+    JOIN GameCatalogView gc
         ON gc.Id = TRY_CAST(b.GameId AS INT)
-    WHERE b.PlatformName='Pong' AND b.CasinoName='PFH'
+    WHERE b.PlatformName='Solstice' AND b.CasinoName='KSK'
       AND b.Date >= '{window_start}'
       AND b.Date <= '{as_of_date}'
       AND TRY_CAST(b.GameId AS INT) IS NOT NULL
@@ -2287,8 +2287,8 @@ def load_player_game_bets(conn, window_start: str = "2026-01-01", as_of_date: st
     if as_of_date is None:
         as_of_date = datetime.date.today().isoformat()
     """
-    Player x Game bet volume for V1 (PFH/Pong) only.
-    Joins BetSpinSummaryCashView3Pong with GameCatalogView1 to get game names.
+    Player x Game bet volume for V1 (KSK/Solstice) only.
+    Joins WagerSummaryViewSolstice with GameCatalogView to get game names.
     Returns: AccountNumber, game_id, game_name, BetVolume
     """
     sql = f"""
@@ -2297,10 +2297,10 @@ def load_player_game_bets(conn, window_start: str = "2026-01-01", as_of_date: st
         TRY_CAST(b.GameId AS INT)          AS game_id,
         gc.Name                            AS game_name,
         SUM(CAST(b.TotalBet AS BIGINT)) / 100.0 AS BetVolume
-    FROM BetSpinSummaryCashView3 b
-    JOIN GameCatalogView1 gc
+    FROM WagerSummaryView b
+    JOIN GameCatalogView gc
         ON gc.Id = TRY_CAST(b.GameId AS INT)
-    WHERE b.PlatformName='Pong' AND b.CasinoName='PFH'
+    WHERE b.PlatformName='Solstice' AND b.CasinoName='KSK'
       AND b.Date >= '{window_start}'
       AND b.Date <= '{as_of_date}'
       AND TRY_CAST(b.GameId AS INT) IS NOT NULL
@@ -2566,7 +2566,7 @@ def generate_game_diagnostic(
     game_portfolio: dict,
     retro: list,
     conn=None,
-    platform: str = "PFH",
+    platform: str = "KSK",
     lookback_weeks: int = 4,
     lapsed_count: int | None = None,
     total_players: int | None = None,
@@ -2631,9 +2631,9 @@ def generate_game_diagnostic(
     n_portfolio  = gp.get("n_games", 0)
 
     # Step 3: Location data (best-effort — requires live connection)
-    # V2/V1 pass through directly so get_active_location_count uses TaskHandlerBetSpinSummary.
-    # PFH maps to "PFH" (engine MODES key). EdgeLabs/Pong pass through as-is.
-    _loc_mode = {"V1": "V1", "V2": "V2", "PFH": "PFH"}.get(platform, platform)
+    # V2/V1 pass through directly so get_active_location_count uses ProductPerformanceSummary.
+    # KSK maps to "KSK" (engine MODES key). Aurora/Solstice pass through as-is.
+    _loc_mode = {"V1": "V1", "V2": "V2", "KSK": "KSK"}.get(platform, platform)
     location_data: dict | None = None
     if conn is not None:
         try:

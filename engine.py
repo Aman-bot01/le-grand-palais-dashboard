@@ -1,9 +1,9 @@
 """
-PFH / EdgeLabs Player Segmentation - data + clustering engine
-=============================================================
-SAFE-CLONE VERSION: connects to a local, 100% synthetic DuckDB file
-(synthetic.duckdb, built by synthetic_data.py) instead of the real SQL Server /
-Oracle warehouse. No network connection, no real credentials, no real data.
+Le Grand Palais -- data + clustering engine
+=============================================
+Connects to a local, 100% synthetic DuckDB file (synthetic.duckdb, built by
+synthetic_data.py). No network connection, no real credentials -- every
+number in this app is generated.
 
 Kept the same public function signatures the callers (launch.py,
 launch_dashboard_v2.py) use -- get_connection(), query_df(), and
@@ -35,9 +35,9 @@ EL_LOOKBACK_DAYS = int(os.getenv("EL_LOOKBACK_DAYS", "30"))
 
 # Platform modes -----------------------------------------------------------
 MODES = {
-    "PFH": dict(platform="Pong", casinos=["PFH"], dim="location",
+    "KSK": dict(platform="Solstice", casinos=["KSK"], dim="location",
                 unit_label="State / Store"),
-    "EdgeLabs": dict(platform="EdgeLabs", casinos=None, dim="casino",
+    "Aurora": dict(platform="Aurora", casinos=None, dim="casino",
                      unit_label="Casino"),
 }
 GAME_PREFIXES = ("V1", "V2")
@@ -121,21 +121,21 @@ def _scope_where(mode: str) -> str:
 
 
 def default_window(mode: str, as_of: dt.date):
-    if mode == "PFH":
+    if mode == "KSK":
         return dt.date.fromisoformat(WINDOW_START), as_of
     return as_of - dt.timedelta(days=EL_LOOKBACK_DAYS), as_of
 
 
 # ── Raw pulls ────────────────────────────────────────────────────────
 def get_latest_date(conn, mode: str) -> dt.date:
-    df = query_df(conn, f"""SELECT MAX("Date") d FROM BetSpinSummaryCashView3
+    df = query_df(conn, f"""SELECT MAX("Date") d FROM WagerSummaryView
         WHERE {_scope_where(mode)}""")
     return pd.to_datetime(df["d"].iloc[0]).date()
 
 
 def get_window_start(conn, mode: str) -> dt.date:
     try:
-        df = query_df(conn, f"""SELECT MIN("Date") d FROM BetSpinSummaryCashView3
+        df = query_df(conn, f"""SELECT MIN("Date") d FROM WagerSummaryView
             WHERE {_scope_where(mode)}""")
         detected = pd.to_datetime(df["d"].iloc[0]).date()
         floor = dt.date.fromisoformat(WINDOW_START)
@@ -149,7 +149,7 @@ def load_daily_aggregate(conn, start, end, mode: str) -> pd.DataFrame:
     sql = f"""
         SELECT AccountNumber, {unit} AS UnitKey, AggregatorName AS Aggregator, "Date",
                SUM({HANDLE_SQL}) AS Handle, SUM({WIN_SQL}) AS Win, SUM(Spins) AS Spins
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_scope_where(mode)} AND "Date" >= '{start}' AND "Date" <= '{end}'
         GROUP BY AccountNumber, {unit}, AggregatorName, "Date" """
     df = query_df(conn, sql)
@@ -168,8 +168,8 @@ def load_daily_aggregate(conn, start, end, mode: str) -> pd.DataFrame:
 
 def load_locations(conn) -> pd.DataFrame:
     df = query_df(conn, """SELECT LocationId, StateProv, City, BusinessName,
-                                  Distributor, Operator, PFHEnabled
-                           FROM CrmLocationView""")
+                                  Distributor, Operator, KSKEnabled
+                           FROM PropertyDirectoryView""")
     df["LocationId"] = df["LocationId"].astype(str).str.strip()
     return df
 
@@ -183,8 +183,8 @@ def get_active_location_count(conn, game_id, mode: str, as_of_days: int = 14) ->
         SELECT
             CAST(b.StoreNumber AS VARCHAR(50)) AS loc,
             MAX(loc.StateProv) AS state_prov
-        FROM TaskHandlerBetSpinSummary b
-        LEFT JOIN CrmLocationView loc
+        FROM ProductPerformanceSummary b
+        LEFT JOIN PropertyDirectoryView loc
             ON CAST(b.StoreNumber AS VARCHAR(50)) = CAST(loc.LocationId AS VARCHAR(50))
         WHERE b.CasinoName IN ('vendor1', 'vendor2')
           AND b.GameId = {int(gid)}
@@ -205,8 +205,8 @@ def get_active_location_count(conn, game_id, mode: str, as_of_days: int = 14) ->
         SELECT
             CAST(b.StoreNumber AS VARCHAR(50)) AS loc,
             MAX(loc.StateProv) AS state_prov
-        FROM BetSpinSummaryCashView3 b
-        LEFT JOIN CrmLocationView loc
+        FROM WagerSummaryView b
+        LEFT JOIN PropertyDirectoryView loc
             ON CAST(b.StoreNumber AS VARCHAR(50)) = CAST(loc.LocationId AS VARCHAR(50))
         WHERE {_scope_where(mode)}
           AND b.GameId = '{_esc(gid)}'
@@ -223,10 +223,10 @@ def get_active_location_count(conn, game_id, mode: str, as_of_days: int = 14) ->
             by_state[st] = by_state.get(st, 0) + 1
         return {"count": len(df), "unit_label": "locations", "by_state": by_state}
     else:
-        _el_scope = _scope_where(mode) if mode in MODES else "PlatformName='EdgeLabs'"
+        _el_scope = _scope_where(mode) if mode in MODES else "PlatformName='Aurora'"
         sql = f"""
         SELECT COUNT(DISTINCT CasinoName) AS cnt
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_el_scope}
           AND TRY_CAST(GameId AS INT) = {int(gid)}
           AND CAST("Date" AS DATE) >= {cutoff}
@@ -413,7 +413,7 @@ def load_game_summary(conn, start, end, mode, extra="") -> pd.DataFrame:
         SELECT GameId, SUM(Spins) AS Spins,
                SUM({HANDLE_SQL}) AS Bet, SUM({WIN_SQL}) AS Win,
                COUNT(DISTINCT AccountNumber) AS Players
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_scope_where(mode)}{extra}
           AND "Date" >= '{start}' AND "Date" <= '{end}'
         GROUP BY GameId"""
@@ -433,7 +433,7 @@ def load_game_summary(conn, start, end, mode, extra="") -> pd.DataFrame:
 def load_game_daily(conn, start, end, mode, extra="") -> pd.DataFrame:
     sql = f"""
         SELECT GameId, "Date", SUM({HANDLE_SQL}) AS Bet, SUM({WIN_SQL}) AS Win, SUM(Spins) AS Spins
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_scope_where(mode)}{extra}
           AND "Date" >= '{start}' AND "Date" <= '{end}'
         GROUP BY GameId, "Date" """
@@ -453,7 +453,7 @@ def load_bet_level_summary(conn, start, end, mode, casino=None, currency=None, e
         SELECT GameId, Bet,
                SUM({HANDLE_SQL}) AS Handle, SUM({WIN_SQL}) AS Win,
                SUM(Spins) AS Spins, COUNT(DISTINCT AccountNumber) AS Players
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_scope_where(mode)}{_casino_filter(casino)}{_currency_filter(currency)}{extra}
           AND "Date" >= '{start}' AND "Date" <= '{end}'
         GROUP BY GameId, Bet"""
@@ -474,7 +474,7 @@ def load_bet_level_summary(conn, start, end, mode, casino=None, currency=None, e
 def load_player_bet_detail(conn, account, start, end, mode) -> pd.DataFrame:
     sql = f"""
         SELECT GameId, Bet, SUM({HANDLE_SQL}) AS Handle, SUM({WIN_SQL}) AS Win, SUM(Spins) AS Spins
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_scope_where(mode)} AND AccountNumber='{_esc(account)}'
           AND "Date" >= '{start}' AND "Date" <= '{end}'
         GROUP BY GameId, Bet"""
@@ -516,7 +516,7 @@ def flag_hot_cold(bl: pd.DataFrame, min_spins: int = 500, threshold_pp: float = 
 def load_casinos(conn, mode, start, end) -> pd.DataFrame:
     df = query_df(conn, f"""
         SELECT CasinoName, COUNT(DISTINCT AccountNumber) Players, SUM(Spins) Spins
-        FROM BetSpinSummaryCashView3
+        FROM WagerSummaryView
         WHERE {_scope_where(mode)} AND "Date" >= '{start}' AND "Date" <= '{end}'
         GROUP BY CasinoName ORDER BY Players DESC""")
     if not df.empty:
@@ -526,7 +526,7 @@ def load_casinos(conn, mode, start, end) -> pd.DataFrame:
 
 def load_currencies(conn, mode, start, end, casino=None) -> list:
     df = query_df(conn, f"""
-        SELECT DISTINCT CurrencyName FROM BetSpinSummaryCashView3
+        SELECT DISTINCT CurrencyName FROM WagerSummaryView
         WHERE {_scope_where(mode)}{_casino_filter(casino)}
           AND "Date" >= '{start}' AND "Date" <= '{end}' AND CurrencyName IS NOT NULL""")
     return sorted([c for c in df["CurrencyName"].astype(str) if c and c != "None"])
@@ -538,7 +538,7 @@ def load_game_catalog_sql(conn) -> pd.DataFrame:
     SELECT Id, Name, Type, Platform, Product, Codebase, Status,
            MinBet, ScreenOrientation, JackpotStatus, Vip,
            Seasonal, Mechanics, Theme, Branded, SkinOf, ModifiedAt
-    FROM GameCatalogView1
+    FROM GameCatalogView
     """
     df = query_df(conn, sql)
     if df.empty:
@@ -550,9 +550,9 @@ def load_game_catalog_sql(conn) -> pd.DataFrame:
 
 
 def load_game_catalog(path: str | None = None) -> pd.DataFrame:
-    """Excel fallback -- kept only so load_game_catalog_with_fallback() has the
-    same failure-mode shape as the original; the synthetic clone never ships a
-    game_catalog.xlsx, so this simply raises and the caller returns an empty df."""
+    """Excel fallback -- kept only so load_game_catalog_with_fallback() has a
+    matching failure-mode shape; this app never ships a game_catalog.xlsx, so
+    this simply raises and the caller returns an empty df."""
     import openpyxl
     path = path or os.path.join(DATA_DIR, "game_catalog.xlsx")
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -631,7 +631,7 @@ def attach_game_names(per_game: pd.DataFrame, catalog: pd.DataFrame,
 
 
 def load_terminal_breakdown(conn, game_id: int, platform: str) -> pd.DataFrame:
-    """Not called by launch.py/launch_dashboard_v2.py in this clone (verified by
-    grep), and there is no AnalyticsGameTerminals table in the synthetic DB since
-    nothing references it -- kept only as a stub so a stray import doesn't crash."""
+    """Not called by launch.py/launch_dashboard_v2.py (verified by grep), and
+    there is no AnalyticsGameTerminals table in the synthetic DB since nothing
+    references it -- kept only as a stub so a stray import doesn't crash."""
     return pd.DataFrame()

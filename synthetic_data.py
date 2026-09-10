@@ -1,10 +1,9 @@
 """
-Synthetic data generator for the "safe clone" of the game-analytics dashboard.
+Synthetic data generator for the Le Grand Palais casino intelligence dashboard.
 
-Produces C:\\AI\\clone\\synthetic.duckdb containing 100% fabricated data shaped like
-the schema launch.py / launch_dashboard_v2.py expect (columns were read directly out
-of the real SQL query text in those two files, NOT guessed). No real Pong Studios
-game name, location name, or figure appears anywhere in this file.
+Produces synthetic.duckdb containing 100% fabricated data -- every game name,
+location, player account, and figure in this file is invented. This file
+contains no real company data of any kind.
 
 Fictional brand: "Le Grand Palais" -- a physical casino chain spread across Québec
 (flagship market), Ontario (secondary market), and a curated spread of US states
@@ -12,15 +11,15 @@ Fictional brand: "Le Grand Palais" -- a physical casino chain spread across Qué
 shows up in the generated numbers, not just in labels.
 
 Tables built:
-  GameCatalogView1               - fake game catalog (v1 / v2 / igaming)
-  AnalyticsGameTerminalsGames    - daily per-terminal-location rows for v1/v2 games
-  TaskHandlerBetSpinSummary      - trailing-window activity feed for v1/v2 (vendor test rig)
-  BetSpinSummaryCashView3        - base igaming (PFH + EdgeLabs) spin/bet fact table
-  BetSpinSummaryCashView3Pong    - VIEW: PlatformName='Pong' AND CasinoName='PFH' slice
-  BetSpinSummaryCashView3EdgeLabs- VIEW: PlatformName='EdgeLabs' slice
-  BetSpinSummarySocialView2      - VIEW: same EdgeLabs slice, used by the Social Casino tab
-  CrmLocationView                - fake locations (Le Grand Palais properties)
-  CrmUpdateLogView               - fake release / math-update log
+  GameCatalogView               - fake game catalog (v1 / v2 / igaming)
+  TerminalActivityView    - daily per-terminal-location rows for v1/v2 games
+  ProductPerformanceSummary      - trailing-window activity feed for v1/v2 (vendor test rig)
+  WagerSummaryView        - base igaming (KSK + Aurora) spin/bet fact table
+  WagerSummaryViewSolstice    - VIEW: PlatformName='Solstice' AND CasinoName='KSK' slice
+  WagerSummaryViewAurora- VIEW: PlatformName='Aurora' slice
+  MemberActivityView      - VIEW: same Aurora slice, used by the Social Casino tab
+  PropertyDirectoryView                - fake locations (Le Grand Palais properties)
+  OperationsLogView               - fake release / math-update log
   LocationAnalyticsSummary       - fake weekly location performance (Math Impact tab)
 
 Run:  python synthetic_data.py
@@ -43,7 +42,7 @@ rng = np.random.default_rng(SEED)
 TODAY = dt.date(2026, 9, 2)  # fixed "as of" so the dataset is reproducible
 
 # ─────────────────────────────────────────────────────────────────────────
-# Fake vocabularies -- nothing below is a real Pong Studios asset
+# Fake vocabularies -- nothing below is a real-world asset
 # ─────────────────────────────────────────────────────────────────────────
 ADJ = ["Cosmic", "Neon", "Lucky", "Golden", "Wild", "Mystic", "Blazing", "Frozen",
        "Crimson", "Sapphire", "Electric", "Diamond", "Silver", "Emerald", "Thunder",
@@ -91,7 +90,7 @@ MECHANICS = ["Hold & Spin", "Cascading Reels", "Free Spins", "Multiplier Wheel"]
 # second), plus a small Las Vegas cluster as its one US outpost. `intensity`
 # is a per-city revenue multiplier tuned so the region hierarchy (QC > ON >
 # rest of Canada > Vegas) actually shows up in generated bet volume, not just
-# in city labels. `region` doubles as CrmLocationView.StateProv -- the
+# in city labels. `region` doubles as PropertyDirectoryView.StateProv -- the
 # Canadian province codes and "NV" all match the dashboard's existing map
 # centroids, so the map "just works" against this data with no dashboard
 # code changes.
@@ -195,7 +194,7 @@ LOCATION_INTENSITY = {loc: LOC_META[loc]["intensity"] for loc in LOCATIONS}
 _LOC_P = np.array([LOCATION_INTENSITY[loc] for loc in LOCATIONS])
 _LOC_P = _LOC_P / _LOC_P.sum()
 
-PFH_ACCOUNTS = [f"LGP-K{100000 + i}" for i in range(3500)]   # kiosk network loyalty accounts
+KSK_ACCOUNTS = [f"LGP-K{100000 + i}" for i in range(3500)]   # kiosk network loyalty accounts
 EDGE_ACCOUNTS = [f"LGP-M{200000 + i}" for i in range(3500)]  # private members'-club accounts
 LAND_ACCOUNTS = [f"LGP-{300000 + i}" for i in range(6000)]   # gaming-floor loyalty accounts
 
@@ -223,7 +222,7 @@ def _unique_names(n, rng_local):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 1. GameCatalogView1
+# 1. GameCatalogView
 # ─────────────────────────────────────────────────────────────────────────
 def build_game_catalog():
     rows = []
@@ -279,11 +278,11 @@ def build_game_catalog():
             ))
         return recs
 
-    v1_products = {"vals": ["p2p", "sweeps", "pulltabs", "class2", "hhr", "gotskill"],
+    v1_products = {"vals": ["p2p", "sweeps", "pulltabs", "class2", "hhr", "skillplay"],
                    "p": [0.30, 0.30, 0.15, 0.10, 0.10, 0.05]}
     v2_products = {"vals": ["p2p", "sweeps", "pulltabs", "class2", "hhr"],
                    "p": [0.25, 0.30, 0.20, 0.15, 0.10]}
-    ig_products = {"vals": ["pfh-edgelabs"], "p": [1.0]}
+    ig_products = {"vals": ["ksk-aurora"], "p": [1.0]}
 
     rows += gen_group("v1", 1001, 55, 6, v1_products, 95001)
     rows += gen_group("v2", 2001, 55, 6, v2_products, 96001)
@@ -294,7 +293,7 @@ def build_game_catalog():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 2. AnalyticsGameTerminalsGames  (+ TaskHandlerBetSpinSummary derived from it)
+# 2. TerminalActivityView  (+ ProductPerformanceSummary derived from it)
 # ─────────────────────────────────────────────────────────────────────────
 def _shape_curve(n_weeks, trend, rng_local):
     t = np.arange(n_weeks)
@@ -384,7 +383,7 @@ def build_terminal_games(catalog):
 
 def build_task_handler(terminal_games, catalog):
     """Trailing-30-day activity feed for the V1/V2 'active locations' + What's New
-    Products lookup. Derived from the tail of AnalyticsGameTerminalsGames so it's
+    Products lookup. Derived from the tail of TerminalActivityView so it's
     always internally consistent with it."""
     cutoff = pd.Timestamp(TODAY - dt.timedelta(days=35))
     tail = terminal_games[terminal_games["SummaryDate"] >= cutoff].copy()
@@ -404,11 +403,11 @@ def build_task_handler(terminal_games, catalog):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 3. BetSpinSummaryCashView3  (igaming: PFH kiosk network + EdgeLabs members' club)
+# 3. WagerSummaryView  (igaming: KSK kiosk network + Aurora members' club)
 # ─────────────────────────────────────────────────────────────────────────
 def build_bet_spin_summary(catalog):
     igaming = catalog[catalog["Platform"] == "igaming"]
-    home_store = {a: rng.choice(LOCATIONS, p=_LOC_P) for a in PFH_ACCOUNTS}
+    home_store = {a: rng.choice(LOCATIONS, p=_LOC_P) for a in KSK_ACCOUNTS}
     home_casino = {a: rng.choice(EDGE_CASINOS) for a in EDGE_ACCOUNTS}
     all_rows = []
 
@@ -427,7 +426,7 @@ def build_bet_spin_summary(catalog):
                     "hit": rng.uniform(420, 1250)}[tier]
         counts = np.maximum(1, np.round(peak_players * curve * (1 + rng.normal(0, 0.08, n_weeks)))).astype(int)
 
-        on_pfh = rng.random() < 0.85
+        on_ksk = rng.random() < 0.85
         on_edge = rng.random() < 0.55
 
         def emit(scope, account_pool, casino_source):
@@ -441,7 +440,7 @@ def build_bet_spin_summary(catalog):
                 accts = rng.choice(account_pool, size=c, replace=False)
                 day_offsets = rng.integers(0, 7, size=c)
                 days = [min(week_start + dt.timedelta(days=int(o)), TODAY) for o in day_offsets]
-                if scope == "pfh":
+                if scope == "ksk":
                     stores = [home_store[a] for a in accts]
                     intens = np.array([LOCATION_INTENSITY[s] for s in stores])
                 else:
@@ -455,18 +454,18 @@ def build_bet_spin_summary(catalog):
                 total_win_cents = np.clip(total_win_cents, 0, (total_bet_cents * 1.3).astype(np.int64))
                 spins = np.maximum(1, np.round(bet_dollars / avg_wager)).astype(np.int64)
                 free_camp = np.where(rng.random(c) < 0.04, "CAMP" + rng.integers(1, 50, c).astype(str), None)
-                if scope == "pfh":
-                    casinos = ["PFH"] * c
-                    platform_name = "Pong"
+                if scope == "ksk":
+                    casinos = ["KSK"] * c
+                    platform_name = "Solstice"
                 else:
                     casinos = [home_casino[a] for a in accts]
-                    platform_name = "EdgeLabs"
+                    platform_name = "Aurora"
                 all_rows.append(pd.DataFrame({
                     "PlatformName": platform_name, "CasinoName": casinos, "Date": days,
                     "StoreNumber": stores, "AccountNumber": accts, "GameId": gid,
                     "TotalBet": total_bet_cents, "TotalWin": total_win_cents, "Spins": spins,
                     "CurrencyName": rng.choice(["USD", "SC", "GC"], size=c,
-                                                p=[0.7, 0.2, 0.1] if scope == "pfh" else [0.15, 0.55, 0.30]),
+                                                p=[0.7, 0.2, 0.1] if scope == "ksk" else [0.15, 0.55, 0.30]),
                     "AggregatorName": rng.choice(["AggOne", "AggTwo", "AggThree", None], size=c,
                                                   p=[0.35, 0.30, 0.20, 0.15]),
                     "FreeGameCampaignId": free_camp,
@@ -478,12 +477,12 @@ def build_bet_spin_summary(catalog):
                                                  np.round(bet_dollars * 5 * 100).astype(np.int64), 0),
                 }))
 
-        if on_pfh:
-            emit("pfh", PFH_ACCOUNTS, "PFH")
+        if on_ksk:
+            emit("ksk", KSK_ACCOUNTS, "KSK")
         if on_edge:
             emit("edge", EDGE_ACCOUNTS, None)
-        if not on_pfh and not on_edge:
-            emit("pfh", PFH_ACCOUNTS, "PFH")  # every igaming game lives somewhere
+        if not on_ksk and not on_edge:
+            emit("ksk", KSK_ACCOUNTS, "KSK")  # every igaming game lives somewhere
 
     df = pd.concat(all_rows, ignore_index=True) if all_rows else pd.DataFrame()
     df["Date"] = pd.to_datetime(df["Date"])
@@ -491,22 +490,22 @@ def build_bet_spin_summary(catalog):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 4. CrmLocationView
+# 4. PropertyDirectoryView
 # ─────────────────────────────────────────────────────────────────────────
 def build_crm_locations():
     rows = []
-    platform_choices = ["PFH", "V2", "V1", "UNKNOWN"]
+    platform_choices = ["KSK", "V2", "V1", "UNKNOWN"]
     product_by_platform = {
-        "PFH": ["PFH + Sweeps", "Kiosk Only", "PFH Only"],
+        "KSK": ["KSK + Sweeps", "Kiosk Only", "KSK Only"],
         "V2": ["P2P", "PullTabs", "Class 2", "HHR", "Sweeps"],
-        "V1": ["Sweeps", "PFH Only", "P2P", "Got Skill"],
+        "V1": ["Sweeps", "KSK Only", "P2P", "Skill Play"],
         "UNKNOWN": ["Sweeps"],
     }
     for i, loc_id in enumerate(LOCATIONS):
         meta = LOC_META[loc_id]
         cfg_platform = rng.choice(platform_choices, p=[0.35, 0.30, 0.25, 0.10])
         cfg_product = rng.choice(product_by_platform[cfg_platform])
-        kiosk = int(cfg_platform == "PFH" and cfg_product in ("PFH + Sweeps", "Kiosk Only") and rng.random() < 0.3)
+        kiosk = int(cfg_platform == "KSK" and cfg_product in ("KSK + Sweeps", "Kiosk Only") and rng.random() < 0.3)
         if meta["region"] == "QC":
             mgr = f"{rng.choice(FR_FIRST_NAMES)} {rng.choice(FR_LAST_NAMES)}"
         else:
@@ -521,7 +520,7 @@ def build_crm_locations():
             BusinessName=meta["business_name"],
             Distributor=rng.choice(DISTRIBUTORS),
             Operator=rng.choice(OPERATORS),
-            PFHEnabled=int(cfg_platform == "PFH"),
+            KSKEnabled=int(cfg_platform == "KSK"),
             ConfigProduct=cfg_product,
             ConfigStudio=rng.choice(STUDIOS),
             ConfigPlatform=cfg_platform,
@@ -535,17 +534,17 @@ def build_crm_locations():
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 5. CrmUpdateLogView  (+ LocationAnalyticsSummary for the Math Impact tab)
+# 5. OperationsLogView  (+ LocationAnalyticsSummary for the Math Impact tab)
 # ─────────────────────────────────────────────────────────────────────────
 def build_crm_update_log(catalog, locations_df):
     rows = []
     landbased = catalog[catalog["Platform"].isin(["v1", "v2"])]
-    igaming_pfh = catalog[catalog["Platform"] == "igaming"]
+    igaming_ksk = catalog[catalog["Platform"] == "igaming"]
 
     # "Game" / "Enable" rows -- one simple (no '|' multi-game notes -- see the
     # load_game_releases() simplification note in launch_dashboard_v2.py) row group
     # per rollout location, spread over the weeks following each game's launch.
-    for games_df, has_platform in ((landbased, True), (igaming_pfh, True)):
+    for games_df, has_platform in ((landbased, True), (igaming_ksk, True)):
         for _, g in games_df.iterrows():
             n_weeks = max(1, int(round(g["_launch_offset_days"] / 7)))
             launch_date = TODAY - dt.timedelta(days=int(n_weeks * 7))
@@ -553,9 +552,9 @@ def build_crm_update_log(catalog, locations_df):
                 continue
             n_locs = int(rng.integers(3, 40))
             chosen_locs = rng.choice(LOCATIONS, size=min(n_locs, N_LOCATIONS), replace=False, p=_LOC_P)
-            crm_platform = {"v1": rng.choice(["V1 Sweeps", "V1 Got Skill", "V1 Pay to Play"]),
+            crm_platform = {"v1": rng.choice(["V1 Sweeps", "V1 Skill Play", "V1 Pay to Play"]),
                              "v2": rng.choice(["V2 Pay to Play", "V2 Pull-Tabs", "V2 Class 2", "V2 Sweeps"]),
-                             "igaming": "PFH Sweeps"}[g["Platform"]]
+                             "igaming": "KSK Sweeps"}[g["Platform"]]
             for loc in chosen_locs:
                 enable_date = launch_date + dt.timedelta(days=int(rng.integers(0, 21)))
                 rows.append(dict(LocationId=loc, Date=min(enable_date, TODAY), Category="Game",
@@ -575,7 +574,7 @@ def build_crm_update_log(catalog, locations_df):
             d = ref_date + dt.timedelta(days=int(rng.integers(-3, 3)))
             rows.append(dict(LocationId=loc, Date=min(max(d, TODAY - dt.timedelta(days=729)), TODAY),
                               Category=rng.choice(["Payout", "Pool"]), Action="Update",
-                              Note=note, Platform="PFH Sweeps"))
+                              Note=note, Platform="KSK Sweeps"))
 
     df = pd.DataFrame(rows)
     df["Date"] = pd.to_datetime(df["Date"])
@@ -624,27 +623,27 @@ def main():
           f"{sum(1 for m in LOC_META.values() if m['region']=='ON')} ON, "
           f"{sum(1 for m in LOC_META.values() if m['country']=='US')} US)")
 
-    print("Building GameCatalogView1 ...")
+    print("Building GameCatalogView ...")
     catalog = build_game_catalog()
     print(f"  {len(catalog)} games")
 
-    print("Building AnalyticsGameTerminalsGames ...")
+    print("Building TerminalActivityView ...")
     terminal_games = build_terminal_games(catalog)
     print(f"  {len(terminal_games):,} rows")
 
-    print("Building TaskHandlerBetSpinSummary ...")
+    print("Building ProductPerformanceSummary ...")
     task_handler = build_task_handler(terminal_games, catalog)
     print(f"  {len(task_handler):,} rows")
 
-    print("Building BetSpinSummaryCashView3 (igaming) ...")
+    print("Building WagerSummaryView (igaming) ...")
     bet_spin = build_bet_spin_summary(catalog)
     print(f"  {len(bet_spin):,} rows")
 
-    print("Building CrmLocationView ...")
+    print("Building PropertyDirectoryView ...")
     locations = build_crm_locations()
     print(f"  {len(locations)} rows")
 
-    print("Building CrmUpdateLogView ...")
+    print("Building OperationsLogView ...")
     update_log = build_crm_update_log(catalog, locations)
     print(f"  {len(update_log):,} rows")
 
@@ -665,32 +664,32 @@ def main():
     con = duckdb.connect(DB_PATH)
 
     con.register("catalog_out", catalog_out)
-    con.execute("CREATE TABLE GameCatalogView1 AS SELECT * FROM catalog_out")
+    con.execute("CREATE TABLE GameCatalogView AS SELECT * FROM catalog_out")
 
     con.register("terminal_games", terminal_games)
-    con.execute("CREATE TABLE AnalyticsGameTerminalsGames AS SELECT * FROM terminal_games")
+    con.execute("CREATE TABLE TerminalActivityView AS SELECT * FROM terminal_games")
 
     con.register("task_handler", task_handler)
-    con.execute("CREATE TABLE TaskHandlerBetSpinSummary AS SELECT * FROM task_handler")
+    con.execute("CREATE TABLE ProductPerformanceSummary AS SELECT * FROM task_handler")
 
     con.register("bet_spin", bet_spin)
-    con.execute("CREATE TABLE BetSpinSummaryCashView3 AS SELECT * FROM bet_spin")
+    con.execute("CREATE TABLE WagerSummaryView AS SELECT * FROM bet_spin")
 
-    con.execute("""CREATE VIEW BetSpinSummaryCashView3Pong AS
-                   SELECT * FROM BetSpinSummaryCashView3
-                   WHERE PlatformName='Pong' AND CasinoName='PFH'""")
-    con.execute("""CREATE VIEW BetSpinSummaryCashView3EdgeLabs AS
-                   SELECT * FROM BetSpinSummaryCashView3
-                   WHERE PlatformName='EdgeLabs'""")
-    con.execute("""CREATE VIEW BetSpinSummarySocialView2 AS
-                   SELECT * FROM BetSpinSummaryCashView3
-                   WHERE PlatformName='EdgeLabs'""")
+    con.execute("""CREATE VIEW WagerSummaryViewSolstice AS
+                   SELECT * FROM WagerSummaryView
+                   WHERE PlatformName='Solstice' AND CasinoName='KSK'""")
+    con.execute("""CREATE VIEW WagerSummaryViewAurora AS
+                   SELECT * FROM WagerSummaryView
+                   WHERE PlatformName='Aurora'""")
+    con.execute("""CREATE VIEW MemberActivityView AS
+                   SELECT * FROM WagerSummaryView
+                   WHERE PlatformName='Aurora'""")
 
     con.register("locations", locations)
-    con.execute("CREATE TABLE CrmLocationView AS SELECT * FROM locations")
+    con.execute("CREATE TABLE PropertyDirectoryView AS SELECT * FROM locations")
 
     con.register("update_log", update_log)
-    con.execute("CREATE TABLE CrmUpdateLogView AS SELECT * FROM update_log")
+    con.execute("CREATE TABLE OperationsLogView AS SELECT * FROM update_log")
 
     con.register("loc_summary", loc_summary)
     con.execute("CREATE TABLE LocationAnalyticsSummary AS SELECT * FROM loc_summary")
