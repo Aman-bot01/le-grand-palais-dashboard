@@ -1,0 +1,243 @@
+// =====================================================================
+// FORECAST PAGE — Renfrew Paramedic Service (illustrative scenario model)
+// Paste each block in Power BI Desktop:
+//   Model view / Table view -> New table   (Section 1 and 2)
+//   Modeling -> New measure                 (Section 3)
+// Home table for all measures in Section 3: 'Forecast Month'
+// No relationships are needed. History is read from Call_Master by Year + Month Number.
+// =====================================================================
+
+
+// ---------------------------------------------------------------------
+// SECTION 1 — Month axis (history + 12 forecast months). New table:
+// ---------------------------------------------------------------------
+Forecast Month =
+VAR FirstMonth = DATE ( YEAR ( MIN ( Call_Master[T1_CallReceived] ) ), MONTH ( MIN ( Call_Master[T1_CallReceived] ) ), 1 )
+VAR LastMonth  = DATE ( YEAR ( MAX ( Call_Master[T1_CallReceived] ) ), MONTH ( MAX ( Call_Master[T1_CallReceived] ) ), 1 )
+VAR HistMonths = DATEDIFF ( FirstMonth, LastMonth, MONTH ) + 1
+RETURN
+    SELECTCOLUMNS (
+        GENERATESERIES ( 1, HistMonths + 12, 1 ),
+        "Month Index", [Value],
+        "Month Start", EDATE ( FirstMonth, [Value] - 1 ),
+        "Year", YEAR ( EDATE ( FirstMonth, [Value] - 1 ) ),
+        "Month Num", MONTH ( EDATE ( FirstMonth, [Value] - 1 ) ),
+        "Label", FORMAT ( EDATE ( FirstMonth, [Value] - 1 ), "mmm yy" ),
+        "Is Forecast", [Value] > HistMonths,
+        "Months Ahead", MAX ( 0, [Value] - HistMonths )
+    )
+// After creating: set 'Forecast Month'[Label] -> Sort by column -> Month Index
+
+
+// ---------------------------------------------------------------------
+// SECTION 2 — Scenario sliders (one table each) + milestone table. New tables:
+// ---------------------------------------------------------------------
+Staffing Lever = SELECTCOLUMNS ( GENERATESERIES ( 0, 30, 1 ), "Staffing Lever", [Value] )   // % of delayed calls fixed in Morning/Afternoon
+Area Lever     = SELECTCOLUMNS ( GENERATESERIES ( 0, 30, 1 ), "Area Lever", [Value] )       // % improvement in high-delay municipalities
+Station Lever  = SELECTCOLUMNS ( GENERATESERIES ( 0, 30, 1 ), "Station Lever", [Value] )    // % improvement at slower stations
+// After creating: add each column as a Slicer. Defaults when nothing is selected: Staffing 10, Area 8, Station 8.
+// Ramp-up (6 months), trend window (12 months) and response-time impact (50%) are fixed in the Section 3 measures.
+
+
+// ---------------------------------------------------------------------
+// SECTION 3 — Measures (New measure, home table 'Forecast Month')
+// ---------------------------------------------------------------------
+
+// ---- Slider values ----
+Trend Window Months = 12   // months of history used to fit the baseline trend (edit to change)
+Staffing Lever Pct  = SELECTEDVALUE ( 'Staffing Lever'[Staffing Lever], 10 ) / 100
+Area Lever Pct      = SELECTEDVALUE ( 'Area Lever'[Area Lever], 8 ) / 100
+Station Lever Pct   = SELECTEDVALUE ( 'Station Lever'[Station Lever], 8 ) / 100
+Ramp Months Value   = 6      // months until the changes reach full effect (edit to change)
+Time Impact Pct     = 0.5    // share of the delay reduction that also shortens response time (edit to change)
+
+// ---- History for the month in context ----
+Hist Calls =
+VAR y = MAX ( 'Forecast Month'[Year] )
+VAR m = MAX ( 'Forecast Month'[Month Num] )
+RETURN CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Year] = y, Call_Master[Month Number] = m )
+
+Hist Eligible =
+VAR y = MAX ( 'Forecast Month'[Year] )
+VAR m = MAX ( 'Forecast Month'[Month Num] )
+RETURN
+    CALCULATE (
+        COUNTROWS ( Call_Master ),
+        NOT ( ISBLANK ( Call_Master[Delay Threshold] ) ),
+        Call_Master[Year] = y, Call_Master[Month Number] = m
+    )
+
+Hist Delay Rate =
+// Delay rate on calls that have a benchmark (Patient Category assigned) — avoids the blank-category distortion
+VAR y = MAX ( 'Forecast Month'[Year] )
+VAR m = MAX ( 'Forecast Month'[Month Num] )
+RETURN
+    DIVIDE (
+        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[Year] = y, Call_Master[Month Number] = m ),
+        [Hist Eligible]
+    )
+
+Hist Median Response =
+VAR y = MAX ( 'Forecast Month'[Year] )
+VAR m = MAX ( 'Forecast Month'[Month Num] )
+RETURN CALCULATE ( MEDIAN ( Call_Master[Response time minutes] ), Call_Master[Year] = y, Call_Master[Month Number] = m )
+
+Last Hist Index =
+CALCULATE ( MAX ( 'Forecast Month'[Month Index] ), REMOVEFILTERS ( 'Forecast Month' ), 'Forecast Month'[Is Forecast] = FALSE () )
+
+Months Ahead Value = MAX ( 'Forecast Month'[Months Ahead] )
+
+// ---- Baseline (no change) = linear trend over the last N months ----
+Baseline Delay Rate =
+VAR LastIdx = [Last Hist Index]
+VAR Hist =
+    FILTER ( ALL ( 'Forecast Month' ),
+        'Forecast Month'[Month Index] > LastIdx - [Trend Window Months] && 'Forecast Month'[Month Index] <= LastIdx )
+VAR T   = ADDCOLUMNS ( Hist, "@y", [Hist Delay Rate] )
+VAR Fit = LINESTX ( T, [@y], 'Forecast Month'[Month Index] )
+RETURN
+    MIN ( 0.95, MAX ( 0, MAXX ( Fit, [Intercept] ) + MAXX ( Fit, [Slope1] ) * MAX ( 'Forecast Month'[Month Index] ) ) )
+
+Baseline Calls =
+VAR LastIdx = [Last Hist Index]
+VAR Hist =
+    FILTER ( ALL ( 'Forecast Month' ),
+        'Forecast Month'[Month Index] > LastIdx - [Trend Window Months] && 'Forecast Month'[Month Index] <= LastIdx )
+VAR T   = ADDCOLUMNS ( Hist, "@y", [Hist Calls] )
+VAR Fit = LINESTX ( T, [@y], 'Forecast Month'[Month Index] )
+RETURN
+    MAX ( 0, MAXX ( Fit, [Intercept] ) + MAXX ( Fit, [Slope1] ) * MAX ( 'Forecast Month'[Month Index] ) )
+
+Baseline Median Response =
+VAR LastIdx = [Last Hist Index]
+VAR Hist =
+    FILTER ( ALL ( 'Forecast Month' ),
+        'Forecast Month'[Month Index] > LastIdx - [Trend Window Months] && 'Forecast Month'[Month Index] <= LastIdx )
+VAR T   = ADDCOLUMNS ( Hist, "@y", [Hist Median Response] )
+VAR Fit = LINESTX ( T, [@y], 'Forecast Month'[Month Index] )
+RETURN
+    MAX ( 0, MAXX ( Fit, [Intercept] ) + MAXX ( Fit, [Slope1] ) * MAX ( 'Forecast Month'[Month Index] ) )
+
+// ---- Where the delays are (last 12 months of history) ----
+Delayed L12M =
+VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+RETURN CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD )
+
+Share Peak Hours =
+// Recommendation 1: review afternoon/morning staffing
+VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+RETURN
+    DIVIDE (
+        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD,
+            Call_Master[Hour Group] IN { "Morning", "Afternoon" } ),
+        [Delayed L12M]
+    )
+
+Share High Delay Areas =
+// Recommendation 2: reassess service in high-delay areas
+VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+RETURN
+    DIVIDE (
+        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD,
+            Call_Master[PickupLowerTierDescription] IN { "WhiteWater", "Greater Madawaska", "North Algona Wilberforce", "McNab-Braeside" } ),
+        [Delayed L12M]
+    )
+
+Share Slow Stations =
+// Recommendation 4: review slower-response stations
+VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+RETURN
+    DIVIDE (
+        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD,
+            Call_Master[RosteredFromStationName] IN { "BARRY'S BAY", "RENFREW", "EGANVILLE", "CHALK RIVER" } ),
+        [Delayed L12M]
+    )
+
+// ---- Combined effect of the recommendations ----
+// Levers are combined multiplicatively so overlapping scopes are not double counted.
+Combined Effect =
+1 - ( 1 - [Share Peak Hours] * [Staffing Lever Pct] )
+      * ( 1 - [Share High Delay Areas] * [Area Lever Pct] )
+      * ( 1 - [Share Slow Stations] * [Station Lever Pct] )
+
+Ramp Factor = MIN ( 1, DIVIDE ( [Months Ahead Value], [Ramp Months Value], 0 ) )
+
+// ---- Scenario (with recommendations applied) ----
+Scenario Delay Rate = [Baseline Delay Rate] * ( 1 - [Combined Effect] * [Ramp Factor] )
+
+Scenario Median Response =
+[Baseline Median Response] * ( 1 - [Combined Effect] * [Time Impact Pct] * [Ramp Factor] )
+
+Eligible Share L12M =
+VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+RETURN
+    DIVIDE (
+        CALCULATE ( COUNTROWS ( Call_Master ), NOT ( ISBLANK ( Call_Master[Delay Threshold] ) ), Call_Master[T1_CallReceived] >= StartD ),
+        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[T1_CallReceived] >= StartD )
+    )
+
+Baseline Delayed Calls = [Baseline Calls] * [Eligible Share L12M] * [Baseline Delay Rate]
+Scenario Delayed Calls = [Baseline Calls] * [Eligible Share L12M] * [Scenario Delay Rate]
+Delayed Calls Avoided  = [Baseline Delayed Calls] - [Scenario Delayed Calls]
+
+// ---- Chart series (blank outside the range they should draw) ----
+Actual Delay Rate =
+IF ( MAX ( 'Forecast Month'[Months Ahead] ) = 0, [Hist Delay Rate] )
+
+Baseline Line =
+VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+VAR L   = [Last Hist Index]
+RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Delay Rate], [Baseline Delay Rate] )
+
+Scenario Line =
+VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+VAR L   = [Last Hist Index]
+RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Delay Rate], [Scenario Delay Rate] )
+
+Actual Median Response =
+IF ( MAX ( 'Forecast Month'[Months Ahead] ) = 0, [Hist Median Response] )
+
+Baseline Response Line =
+VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+VAR L   = [Last Hist Index]
+RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Median Response], [Baseline Median Response] )
+
+Scenario Response Line =
+VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+VAR L   = [Last Hist Index]
+RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Median Response], [Scenario Median Response] )
+
+// ---- Milestone table: use a Table visual with Forecast Month[Label] on rows and a visual-level filter
+//      Forecast Month[Months Ahead] is 3, 6, 9, 12 ----
+Delay Rate Improvement (pts) =
+[Baseline Delay Rate] - [Scenario Delay Rate]
+
+Benchmark Met Scenario =
+1 - [Scenario Delay Rate]
+
+Delayed Calls Avoided (cumulative) =
+VAR M = MAX ( 'Forecast Month'[Months Ahead] )
+RETURN
+    SUMX (
+        FILTER ( ALL ( 'Forecast Month' ), 'Forecast Month'[Months Ahead] >= 1 && 'Forecast Month'[Months Ahead] <= M ),
+        [Delayed Calls Avoided]
+    )
+
+// ---- Contribution of each recommendation at full effect (bar chart on a disconnected table if wanted) ----
+Effect Staffing = [Share Peak Hours] * [Staffing Lever Pct]
+Effect Areas    = [Share High Delay Areas] * [Area Lever Pct]
+Effect Stations = [Share Slow Stations] * [Station Lever Pct]
+
+// ---- Headline text for a card / text box ----
+Forecast Headline =
+VAR LastIdx = [Last Hist Index]
+RETURN
+"In 12 months, the delay rate moves from " & FORMAT ( CALCULATE ( [Hist Delay Rate], 'Forecast Month'[Month Index] = LastIdx ), "0.0%" )
+    & " (last actual month) to " & FORMAT ( CALCULATE ( [Baseline Delay Rate], 'Forecast Month'[Months Ahead] = 12 ), "0.0%" )
+    & " if nothing changes, or " & FORMAT ( CALCULATE ( [Scenario Delay Rate], 'Forecast Month'[Months Ahead] = 12 ), "0.0%" )
+    & " with the recommendations applied."
