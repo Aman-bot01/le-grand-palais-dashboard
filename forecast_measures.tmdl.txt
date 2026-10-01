@@ -1,0 +1,279 @@
+		measure 'Trend Window Months' = ```
+				12   // months of history used to fit the baseline trend (edit to change)
+				```
+
+		measure 'Staffing Lever Pct' = ```
+				SELECTEDVALUE ( 'Staffing Lever'[Staffing Lever], 10 ) / 100
+				```
+			formatString: 0.0%
+
+		measure 'Area Lever Pct' = ```
+				SELECTEDVALUE ( 'Area Lever'[Area Lever], 8 ) / 100
+				```
+			formatString: 0.0%
+
+		measure 'Station Lever Pct' = ```
+				SELECTEDVALUE ( 'Station Lever'[Station Lever], 8 ) / 100
+				```
+			formatString: 0.0%
+
+		measure 'Ramp Months Value' = ```
+				6      // months until the changes reach full effect (edit to change)
+				```
+
+		measure 'Time Impact Pct' = ```
+				0.5    // share of the delay reduction that also shortens response time (edit to change)
+				```
+			formatString: 0.0%
+
+		measure 'Hist Calls' = ```
+				VAR y = MAX ( 'Forecast Month'[Year] )
+				VAR m = MAX ( 'Forecast Month'[Month Num] )
+				RETURN CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Year] = y, Call_Master[Month Number] = m )
+				```
+			formatString: #,0
+
+		measure 'Hist Eligible' = ```
+				VAR y = MAX ( 'Forecast Month'[Year] )
+				VAR m = MAX ( 'Forecast Month'[Month Num] )
+				RETURN
+				    CALCULATE (
+				        COUNTROWS ( Call_Master ),
+				        NOT ( ISBLANK ( Call_Master[Delay Threshold] ) ),
+				        Call_Master[Year] = y, Call_Master[Month Number] = m
+				    )
+				```
+			formatString: #,0
+
+		measure 'Hist Delay Rate' = ```
+				VAR y = MAX ( 'Forecast Month'[Year] )
+				VAR m = MAX ( 'Forecast Month'[Month Num] )
+				RETURN
+				    DIVIDE (
+				        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[Year] = y, Call_Master[Month Number] = m ),
+				        [Hist Eligible]
+				    )
+				```
+			formatString: 0.0%
+
+		measure 'Hist Median Response' = ```
+				VAR y = MAX ( 'Forecast Month'[Year] )
+				VAR m = MAX ( 'Forecast Month'[Month Num] )
+				RETURN CALCULATE ( MEDIAN ( Call_Master[Response time minutes] ), Call_Master[Year] = y, Call_Master[Month Number] = m )
+				```
+			formatString: 0.0
+
+		measure 'Last Hist Index' = ```
+				CALCULATE ( MAX ( 'Forecast Month'[Month Index] ), REMOVEFILTERS ( 'Forecast Month' ), 'Forecast Month'[Is Forecast] = FALSE () )
+				```
+
+		measure 'Months Ahead Value' = ```
+				MAX ( 'Forecast Month'[Months Ahead] )
+				```
+
+		measure 'Baseline Delay Rate' = ```
+				VAR LastIdx = [Last Hist Index]
+				VAR Hist =
+				    FILTER ( ALL ( 'Forecast Month' ),
+				        'Forecast Month'[Month Index] > LastIdx - [Trend Window Months] && 'Forecast Month'[Month Index] <= LastIdx )
+				VAR T   = ADDCOLUMNS ( Hist, "@y", [Hist Delay Rate] )
+				VAR Fit = LINESTX ( T, [@y], 'Forecast Month'[Month Index] )
+				RETURN
+				    MIN ( 0.95, MAX ( 0, MAXX ( Fit, [Intercept] ) + MAXX ( Fit, [Slope1] ) * MAX ( 'Forecast Month'[Month Index] ) ) )
+				```
+			formatString: 0.0%
+
+		measure 'Baseline Calls' = ```
+				VAR LastIdx = [Last Hist Index]
+				VAR Hist =
+				    FILTER ( ALL ( 'Forecast Month' ),
+				        'Forecast Month'[Month Index] > LastIdx - [Trend Window Months] && 'Forecast Month'[Month Index] <= LastIdx )
+				VAR T   = ADDCOLUMNS ( Hist, "@y", [Hist Calls] )
+				VAR Fit = LINESTX ( T, [@y], 'Forecast Month'[Month Index] )
+				RETURN
+				    MAX ( 0, MAXX ( Fit, [Intercept] ) + MAXX ( Fit, [Slope1] ) * MAX ( 'Forecast Month'[Month Index] ) )
+				```
+			formatString: #,0
+
+		measure 'Baseline Median Response' = ```
+				VAR LastIdx = [Last Hist Index]
+				VAR Hist =
+				    FILTER ( ALL ( 'Forecast Month' ),
+				        'Forecast Month'[Month Index] > LastIdx - [Trend Window Months] && 'Forecast Month'[Month Index] <= LastIdx )
+				VAR T   = ADDCOLUMNS ( Hist, "@y", [Hist Median Response] )
+				VAR Fit = LINESTX ( T, [@y], 'Forecast Month'[Month Index] )
+				RETURN
+				    MAX ( 0, MAXX ( Fit, [Intercept] ) + MAXX ( Fit, [Slope1] ) * MAX ( 'Forecast Month'[Month Index] ) )
+				```
+			formatString: 0.0
+
+		measure 'Delayed L12M' = ```
+				VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+				VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+				RETURN CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD )
+				```
+
+		measure 'Share Peak Hours' = ```
+				VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+				VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+				RETURN
+				    DIVIDE (
+				        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD,
+				            Call_Master[Hour Group] IN { "Morning", "Afternoon" } ),
+				        [Delayed L12M]
+				    )
+				```
+			formatString: 0.0%
+
+		measure 'Share High Delay Areas' = ```
+				VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+				VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+				RETURN
+				    DIVIDE (
+				        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD,
+				            Call_Master[PickupLowerTierDescription] IN { "WhiteWater", "Greater Madawaska", "North Algona Wilberforce", "McNab-Braeside" } ),
+				        [Delayed L12M]
+				    )
+				```
+			formatString: 0.0%
+
+		measure 'Share Slow Stations' = ```
+				VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+				VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+				RETURN
+				    DIVIDE (
+				        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[Delay Flag] = 1, Call_Master[T1_CallReceived] >= StartD,
+				            Call_Master[RosteredFromStationName] IN { "BARRY'S BAY", "RENFREW", "EGANVILLE", "CHALK RIVER" } ),
+				        [Delayed L12M]
+				    )
+				```
+			formatString: 0.0%
+
+		measure 'Combined Effect' = ```
+				1 - ( 1 - [Share Peak Hours] * [Staffing Lever Pct] )
+				      * ( 1 - [Share High Delay Areas] * [Area Lever Pct] )
+				      * ( 1 - [Share Slow Stations] * [Station Lever Pct] )
+				```
+			formatString: 0.0%
+
+		measure 'Ramp Factor' = ```
+				MIN ( 1, DIVIDE ( [Months Ahead Value], [Ramp Months Value], 0 ) )
+				```
+
+		measure 'Scenario Delay Rate' = ```
+				[Baseline Delay Rate] * ( 1 - [Combined Effect] * [Ramp Factor] )
+				```
+			formatString: 0.0%
+
+		measure 'Scenario Median Response' = ```
+				[Baseline Median Response] * ( 1 - [Combined Effect] * [Time Impact Pct] * [Ramp Factor] )
+				```
+			formatString: 0.0
+
+		measure 'Eligible Share L12M' = ```
+				VAR MaxD   = CALCULATE ( MAX ( Call_Master[T1_CallReceived] ), ALL ( Call_Master ) )
+				VAR StartD = EDATE ( DATE ( YEAR ( MaxD ), MONTH ( MaxD ), 1 ), -11 )
+				RETURN
+				    DIVIDE (
+				        CALCULATE ( COUNTROWS ( Call_Master ), NOT ( ISBLANK ( Call_Master[Delay Threshold] ) ), Call_Master[T1_CallReceived] >= StartD ),
+				        CALCULATE ( COUNTROWS ( Call_Master ), Call_Master[T1_CallReceived] >= StartD )
+				    )
+				```
+			formatString: 0.0%
+
+		measure 'Baseline Delayed Calls' = ```
+				[Baseline Calls] * [Eligible Share L12M] * [Baseline Delay Rate]
+				```
+			formatString: #,0
+
+		measure 'Scenario Delayed Calls' = ```
+				[Baseline Calls] * [Eligible Share L12M] * [Scenario Delay Rate]
+				```
+			formatString: #,0
+
+		measure 'Delayed Calls Avoided' = ```
+				[Baseline Delayed Calls] - [Scenario Delayed Calls]
+				```
+			formatString: #,0
+
+		measure 'Actual Delay Rate' = ```
+				IF ( MAX ( 'Forecast Month'[Months Ahead] ) = 0, [Hist Delay Rate] )
+				```
+			formatString: 0.0%
+
+		measure 'Baseline Line' = ```
+				VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+				VAR L   = [Last Hist Index]
+				RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Delay Rate], [Baseline Delay Rate] )
+				```
+			formatString: 0.0%
+
+		measure 'Scenario Line' = ```
+				VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+				VAR L   = [Last Hist Index]
+				RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Delay Rate], [Scenario Delay Rate] )
+				```
+			formatString: 0.0%
+
+		measure 'Actual Median Response' = ```
+				IF ( MAX ( 'Forecast Month'[Months Ahead] ) = 0, [Hist Median Response] )
+				```
+			formatString: 0.0
+
+		measure 'Baseline Response Line' = ```
+				VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+				VAR L   = [Last Hist Index]
+				RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Median Response], [Baseline Median Response] )
+				```
+			formatString: 0.0
+
+		measure 'Scenario Response Line' = ```
+				VAR Idx = MAX ( 'Forecast Month'[Month Index] )
+				VAR L   = [Last Hist Index]
+				RETURN SWITCH ( TRUE (), Idx < L, BLANK (), Idx = L, [Hist Median Response], [Scenario Median Response] )
+				```
+			formatString: 0.0
+
+		measure 'Delay Rate Improvement (pts)' = ```
+				[Baseline Delay Rate] - [Scenario Delay Rate]
+				```
+			formatString: 0.0%
+
+		measure 'Benchmark Met Scenario' = ```
+				1 - [Scenario Delay Rate]
+				```
+			formatString: 0.0%
+
+		measure 'Delayed Calls Avoided (cumulative)' = ```
+				VAR M = MAX ( 'Forecast Month'[Months Ahead] )
+				RETURN
+				    SUMX (
+				        FILTER ( ALL ( 'Forecast Month' ), 'Forecast Month'[Months Ahead] >= 1 && 'Forecast Month'[Months Ahead] <= M ),
+				        [Delayed Calls Avoided]
+				    )
+				```
+			formatString: #,0
+
+		measure 'Effect Staffing' = ```
+				[Share Peak Hours] * [Staffing Lever Pct]
+				```
+			formatString: 0.0%
+
+		measure 'Effect Areas' = ```
+				[Share High Delay Areas] * [Area Lever Pct]
+				```
+			formatString: 0.0%
+
+		measure 'Effect Stations' = ```
+				[Share Slow Stations] * [Station Lever Pct]
+				```
+			formatString: 0.0%
+
+		measure 'Forecast Headline' = ```
+				VAR LastIdx = [Last Hist Index]
+				RETURN
+				"In 12 months, the delay rate moves from " & FORMAT ( CALCULATE ( [Hist Delay Rate], 'Forecast Month'[Month Index] = LastIdx ), "0.0%" )
+				    & " (last actual month) to " & FORMAT ( CALCULATE ( [Baseline Delay Rate], 'Forecast Month'[Months Ahead] = 12 ), "0.0%" )
+				    & " if nothing changes, or " & FORMAT ( CALCULATE ( [Scenario Delay Rate], 'Forecast Month'[Months Ahead] = 12 ), "0.0%" )
+				    & " with the recommendations applied."
+				```

@@ -21,3 +21,6 @@ Thumbs.db
 
 # Local convenience launcher (hardcoded local paths, not useful to other users)
 open_clone_dashboard.bat
+
+# Local virtualenv (Power BI MCP server)
+venv/
